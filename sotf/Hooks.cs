@@ -194,7 +194,9 @@ namespace SotfPassthrough
                 for (int i = 0; i < all.Length; i++)
                 {
                     var r = all[i];
-                    if (r == null || !r.enabled || r is ParticleSystemRenderer || r is TrailRenderer || r is LineRenderer) continue;
+                    if (r == null || !r.enabled) continue;
+                    string tn = r.GetType().Name;
+                    if (tn == "ParticleSystemRenderer" || tn == "TrailRenderer" || tn == "LineRenderer") continue;
                     r.enabled = false; HiddenRenderers.Add(r); n++;
                 }
                 if (n > 0) Log("hid " + n + " player renderers");
