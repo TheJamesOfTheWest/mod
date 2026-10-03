@@ -31,6 +31,23 @@ public final class PlayerSync {
 			return;
 		}
 
+		if (Passthrough.walk) {
+			// Steve walks: Minecraft's physics move the player; only the look direction and first person come from the host
+			player.setYRot(p.yaw());
+			player.setXRot(p.pitch());
+			player.yRotO = p.yaw();
+			player.xRotO = p.pitch();
+			player.yHeadRot = player.yHeadRotO = p.yaw();
+			player.yBodyRot = player.yBodyRotO = p.yaw();
+			if (minecraft.options.getCameraType() != CameraType.FIRST_PERSON) {
+				minecraft.options.setCameraType(CameraType.FIRST_PERSON);
+			}
+
+			Vec3 at = player.getPosition(partialTick);
+			Passthrough.events.accept(String.format(Locale.ROOT, "{\"t\":\"mcpos\",\"pos\":[%.4f,%.4f,%.4f],\"eye\":%.3f,\"walk\":true}", at.x, at.y, at.z, player.getEyeHeight()));
+			return;
+		}
+
 		if (p.drive()) {
 			// Minecraft flies the player (elytra): it only takes where to look, and tells the host where it is
 			player.setYRot(p.lookYaw());
@@ -80,7 +97,7 @@ public final class PlayerSync {
 	 */
 	public static void tick(final LocalPlayer player) {
 		HostState.Pose p = HostState.live();
-		if (p == null || p.drive()) {
+		if (p == null || p.drive() || Passthrough.walk) {
 			return;
 		}
 

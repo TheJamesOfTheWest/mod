@@ -129,6 +129,43 @@ namespace SotfPassthrough
             Blocks.Clear();
         }
 
+        // ---- Steve walks: Minecraft's player moves, the game's player body follows ----
+        static readonly string[] MoveActions = { "Horizontal", "Vertical", "Right", "Left", "Up", "Down", "Jump", "Run", "Crouch" };
+
+        public static void SetMoveBlocked(bool blocked)
+        {
+            foreach (var name in MoveActions)
+            {
+                try
+                {
+                    var a = Sons.Input.InputSystem.GetInputActionFromName(name);
+                    if (a == null) continue;
+                    if (blocked) a.Disable(); else a.Enable();
+                }
+                catch (Exception) { }
+            }
+        }
+
+        /// <summary>Where the game's player body is (its root), so the camera offset from it can be kept.</summary>
+        public static bool TryGetBody(out Vector3 pos)
+        {
+            try { pos = TheForest.Utils.LocalPlayer.Transform.position; return true; }
+            catch (Exception) { pos = Vector3.zero; return false; }
+        }
+
+        public static void MoveBody(Vector3 pos)
+        {
+            try
+            {
+                var rb = TheForest.Utils.LocalPlayer.Rigidbody;
+                if (rb != null) { rb.position = pos; rb.velocity = Vector3.zero; }
+                TheForest.Utils.LocalPlayer.Transform.position = pos;
+                Physics.SyncTransforms();
+            }
+            catch (Exception e) { if (!_moveFailed) { _moveFailed = true; Log("MoveBody failed: " + e); } }
+        }
+        static bool _moveFailed;
+
         // ---- look blocking while a Minecraft screen (inventory) is open ----
         static readonly string[] LookActions = { "MouseX", "MouseY", "LookRight", "LookLeft", "LookUp", "LookDown", "TogglePauseMenu" };
 

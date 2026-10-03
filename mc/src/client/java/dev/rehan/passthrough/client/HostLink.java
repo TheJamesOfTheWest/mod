@@ -102,6 +102,17 @@ public final class HostLink extends WebSocketServer {
 				}
 				case "netheroff" -> Nether.stop();
 				case "nethersync" -> Nether.resync();
+				case "walk" -> {
+					boolean on = !m.has("on") || m.get("on").getAsBoolean();
+					Passthrough.walk = on;
+					Minecraft minecraft = Minecraft.getInstance();
+					minecraft.execute(() -> {
+						if (minecraft.player != null) {
+							minecraft.player.getAbilities().flying = false;
+							minecraft.player.onUpdateAbilities();
+						}
+					});
+				}
 				case "glide" -> WorldBridge.glide(!m.has("on") || m.get("on").getAsBoolean(), m.has("speed") ? m.get("speed").getAsDouble() : 1.2);
 				default -> {
 					Minecraft minecraft = Minecraft.getInstance();

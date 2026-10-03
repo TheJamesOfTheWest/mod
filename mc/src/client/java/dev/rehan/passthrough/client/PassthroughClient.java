@@ -125,6 +125,7 @@ public class PassthroughClient implements ClientModInitializer {
 		options.tutorialStep = TutorialSteps.NONE;
 		options.cloudStatus().set(CloudStatus.OFF);
 		options.bobView().set(false);
+		options.autoJump().set(true);
 		options.vignette().set(false);
 		options.improvedTransparency().set(false);
 		options.inactivityFpsLimit().set(InactivityFpsLimit.MINIMIZED);

@@ -27,6 +27,9 @@ namespace SotfPassthrough
         readonly bool[] _prev = new bool[256];
         float _lastScroll;
         float _nextReassert;
+        bool _walk;                   // F6: Steve drives, the game's body follows Minecraft's player
+        Vector3 _camOffset;           // camera minus body root, measured when walking starts
+        Vector3 _mcFeet; float _mcEye = 1.62f; bool _haveMcPos;
         bool _mcScreen;               // a Minecraft screen (inventory) is open: the virtual cursor drives it
         float _cx, _cy;               // virtual cursor, in Minecraft-window pixels
         float _lastCx = -1, _lastCy = -1;
@@ -75,6 +78,7 @@ namespace SotfPassthrough
             _shm.Write(true, cam.nearClipPlane, cam.farClipPlane, cam.fieldOfView, yaw, pitch, 0f, -pos.x, pos.y + _yOffset, pos.z);
 
             SampleGround(feet);
+            if (_walk && _haveMcPos) Hooks.MoveBody(_mcFeet + Vector3.up * _mcEye - _camOffset);
             PollInput();
         }
 
@@ -91,7 +95,13 @@ namespace SotfPassthrough
             Edge(0x77, d => { if (d) { try { TypeDump.Run(BepInEx.Paths.BepInExRootPath); Plugin.Instance.Log.LogInfo("Wrote sotf-types.txt and sotf-members.txt to " + BepInEx.Paths.BepInExRootPath); } catch (Exception e) { Plugin.Instance.Log.LogError(e.ToString()); } } }); // F8
             Edge(0x78, d => { if (d) { try { TypeDump.RunRequest(BepInEx.Paths.BepInExRootPath); Plugin.Instance.Log.LogInfo("Wrote sotf-request.txt"); } catch (Exception e) { Plugin.Instance.Log.LogError(e.ToString()); } } }); // F9
             Edge(0x79, d => { if (d) { var c = Camera.main; Hooks.SpawnExplosion(c.transform.position + c.transform.forward * 8f); } }); // F10: test explosion 8 m ahead
+            Edge(0x75, d => { if (d) ToggleWalk(); }); // F6: Steve drives
             if (!_mcMode) return;
+            if (_walk && !_mcScreen)
+            {
+                Edge(0x57, d => Key("forward", d)); Edge(0x53, d => Key("back", d)); Edge(0x41, d => Key("left", d)); Edge(0x44, d => Key("right", d));
+                Edge(0x20, d => Key("jump", d)); Edge(0xA0, d => Key("sneak", d)); Edge(0xA2, d => Key("sprint", d));
+            }
             if (Time.unscaledTime > _nextReassert) { _nextReassert = Time.unscaledTime + 2f; Hooks.SetInputBlocked(true); }
             Edge(0x45, d => { if (!d) return; if (_mcScreen) Key("escape", true); else { Key("inventory", true); Key("inventory", false); } }); // E: Minecraft inventory
             Edge(0x1B, d => { if (d && _mcScreen) Key("escape", true); });                                                                              // Esc closes a Minecraft screen
@@ -148,6 +158,16 @@ namespace SotfPassthrough
                         Hooks.ApplyBlocks(set, clear, _yOffset);
                         break;
                     }
+                    case "mcpos":
+                    {
+                        if (!root.TryGetProperty("walk", out var w) || !w.GetBoolean()) break;
+                        var p = root.GetProperty("pos");
+                        float mx = (float)p[0].GetDouble(), my = (float)p[1].GetDouble(), mz = (float)p[2].GetDouble();
+                        _mcFeet = new Vector3(-mx, my - _yOffset, mz);
+                        if (root.TryGetProperty("eye", out var e)) _mcEye = (float)e.GetDouble();
+                        _haveMcPos = true;
+                        break;
+                    }
                     case "screen":
                     {
                         bool open = root.GetProperty("open").GetBoolean();
@@ -163,6 +183,28 @@ namespace SotfPassthrough
                 }
             }
             catch (Exception e) { Plugin.Instance.Log.LogInfo("bad message: " + e.Message); }
+        }
+
+        void ToggleWalk()
+        {
+            _walk = !_walk;
+            if (_walk)
+            {
+                var cam = Camera.main;
+                if (cam == null || !Hooks.TryGetBody(out var body)) { _walk = false; Plugin.Instance.Log.LogInfo("walk: could not find the player body"); return; }
+                _camOffset = cam.transform.position - body;
+                _haveMcPos = false;
+                if (!_mcMode) { _mcMode = true; Hooks.SetInputBlocked(true); }
+                Hooks.SetMoveBlocked(true);
+                _ws.Send("{\"t\":\"walk\",\"on\":true}");
+            }
+            else
+            {
+                Hooks.SetMoveBlocked(false);
+                _ws.Send("{\"t\":\"walk\",\"on\":false}");
+                foreach (var k in new[] { "forward", "back", "left", "right", "jump", "sneak", "sprint" }) Key(k, false);
+            }
+            Plugin.Instance.Log.LogInfo("Steve drives: " + (_walk ? "ON" : "OFF"));
         }
 
         void Key(string k, bool down) { _ws.Send("{\"t\":\"key\",\"k\":\"" + k + "\",\"down\":" + (down ? "true" : "false") + "}"); }

@@ -42,6 +42,13 @@ final class ClientInput {
 					case "inventory" -> minecraft.options.keyInventory;
 					case "drop" -> minecraft.options.keyDrop;
 					case "swap" -> minecraft.options.keySwapOffhand;
+					case "forward" -> minecraft.options.keyUp;
+					case "back" -> minecraft.options.keyDown;
+					case "left" -> minecraft.options.keyLeft;
+					case "right" -> minecraft.options.keyRight;
+					case "jump" -> minecraft.options.keyJump;
+					case "sneak" -> minecraft.options.keyShift;
+					case "sprint" -> minecraft.options.keySprint;
 					default -> null;
 				};
 				if (k.equals("attack") && down && player != null
