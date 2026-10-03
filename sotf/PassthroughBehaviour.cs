@@ -82,7 +82,15 @@ namespace SotfPassthrough
             sb.Append(",\"fp\":true");
             sb.Append(",\"pl\":[").Append((-feet.x).ToString("R", C)).Append(',').Append((feet.y + _yOffset).ToString("R", C)).Append(',').Append(feet.z.ToString("R", C)).Append("]}");
             _ws.Send(sb.ToString());
-            _shm.Write(true, cam.nearClipPlane, cam.farClipPlane, cam.fieldOfView, yaw, pitch, 0f, -pos.x, pos.y + _yOffset, pos.z);
+            float dsx = 0f, dsy = 0f;
+            try
+            {
+                // an upscaler draws the scene smaller than the screen: tell the effect so it reads the depth buffer in the right place
+                float sx = (float)cam.scaledPixelWidth / Math.Max(1, cam.pixelWidth), sy = (float)cam.scaledPixelHeight / Math.Max(1, cam.pixelHeight);
+                if (sx > 0.2f && sx < 0.99f && sy > 0.2f && sy < 0.99f) { dsx = sx; dsy = sy; }
+            }
+            catch (Exception) { }
+            _shm.Write(true, cam.nearClipPlane, cam.farClipPlane, cam.fieldOfView, yaw, pitch, 0f, -pos.x, pos.y + _yOffset, pos.z, dsx, dsy);
 
             SampleGround(feet);
             if (_walk && _haveMcPos)

@@ -17,13 +17,14 @@ namespace SotfPassthrough
             _view.Write(4, 1u);
         }
 
-        public void Write(bool active, float near, float far, float fov, float yaw, float pitch, float roll, double x, double y, double z)
+        public void Write(bool active, float near, float far, float fov, float yaw, float pitch, float roll, double x, double y, double z, float depthScaleX = 0f, float depthScaleY = 0f)
         {
             _view.Write(8, ++_seq * 2 - 1);          // odd: being written
             _view.Write(16, active ? 1 : 0);
             _view.Write(20, near); _view.Write(24, far); _view.Write(28, fov);
             _view.Write(32, yaw); _view.Write(36, pitch); _view.Write(40, roll);
             _view.Write(48, x); _view.Write(56, y); _view.Write(64, z);
+            _view.Write(72, depthScaleX); _view.Write(76, depthScaleY);
             _view.Write(8, _seq * 2);                // even: complete
         }
     }

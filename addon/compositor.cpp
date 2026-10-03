@@ -23,6 +23,7 @@ namespace
 	std::atomic<bool> g_registered{false};
 	std::atomic<bool> g_active{false};
 	std::atomic<float> g_hostNear{0.15f};
+	std::atomic<float> g_depthScaleX{0.0f}, g_depthScaleY{0.0f};
 	std::atomic<float> g_hostFar{10000.0f};
 	std::atomic<uint32_t> g_bbWidth{0}, g_bbHeight{0};
 	std::atomic<bool> g_cameraLocked{false};
@@ -150,9 +151,12 @@ namespace
 		const float nearClip = read<float>(g_hostView + 20), farClip = read<float>(g_hostView + 24), fov = read<float>(g_hostView + 28);
 		const float yaw = read<float>(g_hostView + 32), pitch = read<float>(g_hostView + 36), roll = read<float>(g_hostView + 40);
 		const double x = read<double>(g_hostView + 48), y = read<double>(g_hostView + 56), z = read<double>(g_hostView + 64);
+		const float depthScaleX = read<float>(g_hostView + 72), depthScaleY = read<float>(g_hostView + 76);
 		if (read<int64_t>(g_hostView + 8) != seq)
 			return;
 		g_active = active != 0;
+		g_depthScaleX = depthScaleX;
+		g_depthScaleY = depthScaleY;
 		if (seq != g_lastHostSeq)
 		{
 			g_lastHostSeq = seq;
@@ -377,6 +381,8 @@ namespace
 			runtime->set_uniform_value_float(v, g_shakeX.load(), g_shakeY.load(), g_shakeRoll.load());
 		if (const effect_uniform_variable v = runtime->find_uniform_variable(kEffect, "PortalWarp"); v.handle != 0)
 			runtime->set_uniform_value_float(v, g_portalWarp.load());
+		if (const effect_uniform_variable v = runtime->find_uniform_variable(kEffect, "DepthScaleAuto"); v.handle != 0)
+			runtime->set_uniform_value_float(v, g_depthScaleX.load(), g_depthScaleY.load());
 		if (const effect_uniform_variable v = runtime->find_uniform_variable(kEffect, "HostPlanes"); v.handle != 0)
 			runtime->set_uniform_value_float(v, g_hostNear.load(), g_hostFar.load());
 
