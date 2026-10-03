@@ -21,6 +21,9 @@
     <Reference Include="UnityEngine"><HintPath>$(GameDir)\BepInEx\interop\UnityEngine.dll</HintPath></Reference>
     <Reference Include="UnityEngine.CoreModule"><HintPath>$(GameDir)\BepInEx\interop\UnityEngine.CoreModule.dll</HintPath></Reference>
     <Reference Include="UnityEngine.PhysicsModule"><HintPath>$(GameDir)\BepInEx\interop\UnityEngine.PhysicsModule.dll</HintPath></Reference>
+    <Reference Include="Sons"><HintPath>$(GameDir)\BepInEx\interop\Sons.dll</HintPath></Reference>
+    <Reference Include="Sons.Input"><HintPath>$(GameDir)\BepInEx\interop\Sons.Input.dll</HintPath></Reference>
+    <Reference Include="Unity.InputSystem"><HintPath>$(GameDir)\BepInEx\interop\Unity.InputSystem.dll</HintPath></Reference>
     <Reference Include="UnityEngine.InputLegacyModule"><HintPath>$(GameDir)\BepInEx\interop\UnityEngine.InputLegacyModule.dll</HintPath></Reference>
   </ItemGroup>
   <Target Name="CopyToGame" AfterTargets="Build" Condition="Exists('$(GameDir)\BepInEx\plugins')">

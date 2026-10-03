@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
+using System.Text.Json;
 using UnityEngine;
 
 namespace SotfPassthrough
@@ -25,6 +26,7 @@ namespace SotfPassthrough
         bool _mcMode;                 // F7: mouse buttons, wheel and 1-9 go to Minecraft
         readonly bool[] _prev = new bool[256];
         float _lastScroll;
+        float _nextReassert;
         float _nextLog;
         float _yOffset; bool _haveOffset;
         readonly HashSet<long> _sampled = new HashSet<long>();
@@ -44,7 +46,7 @@ namespace SotfPassthrough
             }
             if (cam == null || !_ws.Connected) { _shm.Write(false, 0.3f, 1000f, 60f, 0, 0, 0, 0, 0, 0); return; }
             if (_ws.JustConnected) { _ws.JustConnected = false; _sampled.Clear(); _retryAt.Clear(); _haveOffset = false; _ws.Send("{\"t\":\"clear\"}"); _ws.Send("{\"t\":\"view\",\"w\":" + Screen.width + ",\"h\":" + Screen.height + "}"); }
-            while (_ws.TryReceive(out _)) { } // TODO: handle "explosion" etc.
+            while (_ws.TryReceive(out string incoming)) HandleMessage(incoming);
 
             var t = cam.transform;
             Vector3 pos = t.position, fwd = t.forward;
@@ -82,21 +84,38 @@ namespace SotfPassthrough
         void PollInput()
         {
             if (!RawInput.GameFocused()) return;
-            Edge(0x76, d => { if (d) { _mcMode = !_mcMode; Plugin.Instance.Log.LogInfo("Minecraft mode " + (_mcMode ? "ON" : "OFF")); if (!_mcMode) ReleaseKeys(); } }); // F7
+            Edge(0x76, d => { if (d) { _mcMode = !_mcMode; Plugin.Instance.Log.LogInfo("Minecraft mode " + (_mcMode ? "ON" : "OFF")); Hooks.SetInputBlocked(_mcMode); _nextReassert = Time.unscaledTime + 2f; if (!_mcMode) ReleaseKeys(); } }); // F7
             Edge(0x77, d => { if (d) { try { TypeDump.Run(BepInEx.Paths.BepInExRootPath); Plugin.Instance.Log.LogInfo("Wrote sotf-types.txt and sotf-members.txt to " + BepInEx.Paths.BepInExRootPath); } catch (Exception e) { Plugin.Instance.Log.LogError(e.ToString()); } } }); // F8
             Edge(0x78, d => { if (d) { try { TypeDump.RunRequest(BepInEx.Paths.BepInExRootPath); Plugin.Instance.Log.LogInfo("Wrote sotf-request.txt"); } catch (Exception e) { Plugin.Instance.Log.LogError(e.ToString()); } } }); // F9
+            Edge(0x79, d => { if (d) { var c = Camera.main; Hooks.SpawnExplosion(c.transform.position + c.transform.forward * 8f); } }); // F10: test explosion 8 m ahead
             if (!_mcMode) return;
-            Edge(0x01, d => Key("attack", d));
+            if (Time.unscaledTime > _nextReassert) { _nextReassert = Time.unscaledTime + 2f; Hooks.SetInputBlocked(true); }
+            Edge(0x01, d => { Key("attack", d); if (d) Hooks.TryChop(Camera.main); });
             Edge(0x02, d => Key("use", d));
             Edge(0x04, d => Key("pick", d));
             for (int n = 0; n < 9; n++) { int vk = 0x31 + n; int slot = n; Edge(vk, d => { if (d) _ws.Send("{\"t\":\"slot\",\"n\":" + slot + "}"); }); }
             try
             {
-                float sc = Input.mouseScrollDelta.y; // may be unavailable if the game only uses the new Input System
+                float sc = UnityEngine.InputSystem.Mouse.current.scroll.ReadValue().y / 120f; // the game uses the new Input System
                 if (sc > 0.01f) _ws.Send("{\"t\":\"scroll\",\"d\":-1}");
                 else if (sc < -0.01f) _ws.Send("{\"t\":\"scroll\",\"d\":1}");
             }
             catch (Exception) { }
+        }
+
+        /// <summary>Messages from Minecraft: {"t":"explosion","pos":[x,y,z],"r":radius} (Minecraft coordinates).</summary>
+        void HandleMessage(string msg)
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(msg);
+                var root = doc.RootElement;
+                if (!root.TryGetProperty("t", out var t) || t.GetString() != "explosion") return;
+                var p = root.GetProperty("pos");
+                float mx = (float)p[0].GetDouble(), my = (float)p[1].GetDouble(), mz = (float)p[2].GetDouble();
+                Hooks.SpawnExplosion(new Vector3(-mx, my - _yOffset, mz));
+            }
+            catch (Exception e) { Plugin.Instance.Log.LogInfo("bad message: " + e.Message); }
         }
 
         void Key(string k, bool down) { _ws.Send("{\"t\":\"key\",\"k\":\"" + k + "\",\"down\":" + (down ? "true" : "false") + "}"); }
