@@ -22,6 +22,9 @@ namespace SotfPassthrough
 
         WsClient _ws;
         HostShm _shm;
+        bool _mcMode;                 // F7: mouse buttons, wheel and 1-9 go to Minecraft
+        readonly bool[] _prev = new bool[256];
+        float _lastScroll;
         float _nextLog;
         float _yOffset; bool _haveOffset;
         readonly HashSet<long> _sampled = new HashSet<long>();
@@ -67,7 +70,38 @@ namespace SotfPassthrough
             _shm.Write(true, cam.nearClipPlane, cam.farClipPlane, cam.fieldOfView, yaw, pitch, 0f, -pos.x, pos.y + _yOffset, pos.z);
 
             SampleGround(feet);
+            PollInput();
         }
+
+        void Edge(int vk, Action<bool> onChange)
+        {
+            bool d = RawInput.Down(vk);
+            if (d != _prev[vk]) { _prev[vk] = d; onChange(d); }
+        }
+
+        void PollInput()
+        {
+            if (!RawInput.GameFocused()) return;
+            Edge(0x76, d => { if (d) { _mcMode = !_mcMode; Plugin.Instance.Log.LogInfo("Minecraft mode " + (_mcMode ? "ON" : "OFF")); if (!_mcMode) ReleaseKeys(); } }); // F7
+            Edge(0x77, d => { if (d) { try { TypeDump.Run(BepInEx.Paths.BepInExRootPath); Plugin.Instance.Log.LogInfo("Wrote sotf-types.txt and sotf-members.txt to " + BepInEx.Paths.BepInExRootPath); } catch (Exception e) { Plugin.Instance.Log.LogError(e.ToString()); } } }); // F8
+            if (!_mcMode) return;
+            Edge(0x01, d => Key("attack", d));
+            Edge(0x02, d => Key("use", d));
+            Edge(0x04, d => Key("pick", d));
+            for (int n = 0; n < 9; n++) { int vk = 0x31 + n; int slot = n; Edge(vk, d => { if (d) _ws.Send("{\"t\":\"slot\",\"n\":" + slot + "}"); }); }
+            try
+            {
+                float sc = Input.mouseScrollDelta.y; // may be unavailable if the game only uses the new Input System
+                if (sc > 0.01f) _ws.Send("{\"t\":\"scroll\",\"d\":-1}");
+                else if (sc < -0.01f) _ws.Send("{\"t\":\"scroll\",\"d\":1}");
+            }
+            catch (Exception) { }
+        }
+
+        void Key(string k, bool down) { _ws.Send("{\"t\":\"key\",\"k\":\"" + k + "\",\"down\":" + (down ? "true" : "false") + "}"); }
+
+        void ReleaseKeys() { Key("attack", false); Key("use", false); Key("pick", false); }
+
 
         static bool Ground(Vector3 from, out float groundY)
         {
