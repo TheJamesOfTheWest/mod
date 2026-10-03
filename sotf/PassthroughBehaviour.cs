@@ -21,6 +21,7 @@ namespace SotfPassthrough
         static readonly CultureInfo C = CultureInfo.InvariantCulture;
 
         WsClient _ws;
+        float _nextLog;
         float _yOffset; bool _haveOffset;
         readonly HashSet<long> _sampled = new HashSet<long>();
         List<(int dx, int dz)> _spiral;
@@ -30,6 +31,11 @@ namespace SotfPassthrough
         void LateUpdate()
         {
             var cam = Camera.main;
+            if (Time.unscaledTime > _nextLog)
+            {
+                _nextLog = Time.unscaledTime + 5f;
+                Plugin.Instance.Log.LogInfo("status: camera=" + (cam == null ? "none" : cam.name + " pos=" + cam.transform.position) + " ws=" + _ws.Connected + " offset=" + (_haveOffset ? _yOffset.ToString("0.00") : "unset") + " groundColumnsSent=" + _sampled.Count);
+            }
             if (cam == null || !_ws.Connected) return;
             if (_ws.JustConnected) { _ws.JustConnected = false; _sampled.Clear(); _haveOffset = false; _ws.Send("{\"t\":\"clear\"}"); _ws.Send("{\"t\":\"view\",\"w\":" + Screen.width + ",\"h\":" + Screen.height + "}"); }
             while (_ws.TryReceive(out _)) { } // TODO: handle "explosion" etc.
