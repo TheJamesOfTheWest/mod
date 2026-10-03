@@ -72,6 +72,14 @@ namespace SotfPassthrough
             {
                 if (!_prefabSearched) FindExplosionPrefab();
                 if (_explosionPrefab == null) return;
+                try
+                {
+                    // the game's blast knocks the player down and locks the camera: keep it at least 7 m away
+                    var body = TheForest.Utils.LocalPlayer.Transform.position;
+                    var d = pos - body; d.y = 0f;
+                    if (d.magnitude < 7f) pos = body + (d.magnitude < 0.01f ? Vector3.forward : d.normalized) * 7f + Vector3.up * (pos.y - body.y);
+                }
+                catch (Exception) { }
                 // bigger Minecraft blasts (TNT r=4) get a bigger game explosion: scale the effect and, if we can, its damage radius
                 float k = mcRadius > 0f ? Mathf.Clamp(mcRadius / 2f, 1f, 5f) : 1f;
                 var go = UnityEngine.Object.Instantiate(_explosionPrefab, pos, Quaternion.identity);
@@ -165,6 +173,42 @@ namespace SotfPassthrough
             catch (Exception e) { if (!_moveFailed) { _moveFailed = true; Log("MoveBody failed: " + e); } }
         }
         static bool _moveFailed;
+
+        // ---- hide the game's own arms and held items while Minecraft is in charge ----
+        static readonly List<Renderer> HiddenRenderers = new List<Renderer>();
+
+        public static void HideBody(bool hide)
+        {
+            try
+            {
+                if (!hide)
+                {
+                    foreach (var r in HiddenRenderers) if (r != null) r.enabled = true;
+                    HiddenRenderers.Clear();
+                    return;
+                }
+                var root = TheForest.Utils.LocalPlayer.GameObject;
+                if (root == null) return;
+                var all = root.GetComponentsInChildren<Renderer>(false);
+                int n = 0;
+                for (int i = 0; i < all.Length; i++)
+                {
+                    var r = all[i];
+                    if (r == null || !r.enabled || r is ParticleSystemRenderer || r is TrailRenderer || r is LineRenderer) continue;
+                    r.enabled = false; HiddenRenderers.Add(r); n++;
+                }
+                if (n > 0) Log("hid " + n + " player renderers");
+            }
+            catch (Exception e) { Log("HideBody failed: " + e.Message); }
+        }
+
+        /// <summary>F11: undo everything we switched off, and heal.</summary>
+        public static void Unstick()
+        {
+            SetInputBlocked(false); SetLookBlocked(false); SetMoveBlocked(false); HideBody(false);
+            try { TheForest.Utils.LocalPlayer.Vitals.SetFullHealth(); } catch (Exception) { }
+            Log("unstick: input restored, body shown, health restored");
+        }
 
         // ---- look blocking while a Minecraft screen (inventory) is open ----
         static readonly string[] LookActions = { "MouseX", "MouseY", "LookRight", "LookLeft", "LookUp", "LookDown", "TogglePauseMenu" };

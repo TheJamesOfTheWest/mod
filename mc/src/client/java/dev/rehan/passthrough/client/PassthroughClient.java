@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Optional;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
+import net.fabricmc.fabric.api.client.screen.v1.ScreenEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.minecraft.client.CloudStatus;
@@ -78,6 +79,16 @@ public class PassthroughClient implements ClientModInitializer {
 	public void onInitializeClient() {
 		HostLink.launch();
 		ClientTickEvents.END_CLIENT_TICK.register(PassthroughClient::tick);
+		// the host's cursor isn't an OS cursor, so draw one over every screen while hosted
+		ScreenEvents.AFTER_INIT.register((client, screen, width, height) -> ScreenEvents.afterExtract(screen).register((s, graphics, mouseX, mouseY, delta) -> {
+			if (Passthrough.active) {
+				int x = (int) ClientInput.cursorX(), y = (int) ClientInput.cursorY();
+				graphics.fill(x - 5, y - 1, x + 6, y + 2, 0xFF000000);
+				graphics.fill(x - 1, y - 5, x + 2, y + 6, 0xFF000000);
+				graphics.fill(x - 4, y, x + 5, y + 1, 0xFFFFFFFF);
+				graphics.fill(x, y - 4, x + 1, y + 5, 0xFFFFFFFF);
+			}
+		}));
 		ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> {
 			ServerPlayer player = handler.player;
 			// never left gliding from a previous session: with no host yet it would glide down into the void

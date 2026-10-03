@@ -5,6 +5,7 @@ import dev.rehan.passthrough.Passthrough;
 import dev.rehan.passthrough.client.mixin.KeyMappingAccessor;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
+import dev.rehan.passthrough.client.mixin.MouseHandlerAccessor;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.client.input.MouseButtonInfo;
 import net.minecraft.client.player.LocalPlayer;
@@ -19,6 +20,14 @@ final class ClientInput {
 	private static double cursorY;
 
 	private ClientInput() {
+	}
+
+	static double cursorX() {
+		return cursorX;
+	}
+
+	static double cursorY() {
+		return cursorY;
 	}
 
 	static void handle(final Minecraft minecraft, final JsonObject m) {
@@ -86,6 +95,8 @@ final class ClientInput {
 					double dx = x - cursorX, dy = y - cursorY;
 					cursorX = x;
 					cursorY = y;
+					((MouseHandlerAccessor) minecraft.mouseHandler).passthrough$setXpos(m.get("x").getAsDouble());
+					((MouseHandlerAccessor) minecraft.mouseHandler).passthrough$setYpos(m.get("y").getAsDouble());
 					minecraft.gui.screen().mouseMoved(x, y);
 					if (minecraft.mouseHandler.isLeftPressed()) {
 						minecraft.gui.screen().mouseDragged(new MouseButtonEvent(x, y, new MouseButtonInfo(0, 0)), dx, dy);
@@ -106,6 +117,14 @@ final class ClientInput {
 			case "mscroll" -> {
 				if (minecraft.gui.screen() != null) {
 					minecraft.gui.screen().mouseScrolled(cursorX, cursorY, 0.0, m.get("d").getAsDouble());
+				}
+			}
+			case "setpos" -> {
+				// {"t":"setpos","p":[x,y,z]}: put the player back on the ground (Steve fell into a barrier or the void)
+				if (player != null) {
+					com.google.gson.JsonArray a = m.getAsJsonArray("p");
+					player.setPos(a.get(0).getAsDouble(), a.get(1).getAsDouble(), a.get(2).getAsDouble());
+					player.setDeltaMovement(net.minecraft.world.phys.Vec3.ZERO);
 				}
 			}
 			case "hud" -> {

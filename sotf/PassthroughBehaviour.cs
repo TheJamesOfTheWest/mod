@@ -30,6 +30,7 @@ namespace SotfPassthrough
         bool _walk;                   // F6: Steve drives, the game's body follows Minecraft's player
         Vector3 _camOffset;           // camera minus body root, measured when walking starts
         Vector3 _mcFeet; float _mcEye = 1.62f; bool _haveMcPos;
+        float _nextGuard, _nextHide; float _lastSurface = float.NaN;
         bool _mcScreen;               // a Minecraft screen (inventory) is open: the virtual cursor drives it
         float _cx, _cy;               // virtual cursor, in Minecraft-window pixels
         float _lastCx = -1, _lastCy = -1;
@@ -78,7 +79,12 @@ namespace SotfPassthrough
             _shm.Write(true, cam.nearClipPlane, cam.farClipPlane, cam.fieldOfView, yaw, pitch, 0f, -pos.x, pos.y + _yOffset, pos.z);
 
             SampleGround(feet);
-            if (_walk && _haveMcPos) Hooks.MoveBody(_mcFeet + Vector3.up * _mcEye - _camOffset);
+            if (_walk && _haveMcPos)
+            {
+                GuardGround();
+                Hooks.MoveBody(_mcFeet + Vector3.up * _mcEye - _camOffset);
+            }
+            if (_mcMode && Time.unscaledTime > _nextHide) { _nextHide = Time.unscaledTime + 2f; Hooks.HideBody(true); }
             PollInput();
         }
 
@@ -91,11 +97,12 @@ namespace SotfPassthrough
         void PollInput()
         {
             if (!RawInput.GameFocused()) return;
-            Edge(0x76, d => { if (d) { _mcMode = !_mcMode; Plugin.Instance.Log.LogInfo("Minecraft mode " + (_mcMode ? "ON" : "OFF")); Hooks.SetInputBlocked(_mcMode); _nextReassert = Time.unscaledTime + 2f; if (!_mcMode) ReleaseKeys(); } }); // F7
+            Edge(0x76, d => { if (d) { _mcMode = !_mcMode; Plugin.Instance.Log.LogInfo("Minecraft mode " + (_mcMode ? "ON" : "OFF")); Hooks.SetInputBlocked(_mcMode); if (!_mcMode) Hooks.HideBody(false); _nextReassert = Time.unscaledTime + 2f; if (!_mcMode) ReleaseKeys(); } }); // F7
             Edge(0x77, d => { if (d) { try { TypeDump.Run(BepInEx.Paths.BepInExRootPath); Plugin.Instance.Log.LogInfo("Wrote sotf-types.txt and sotf-members.txt to " + BepInEx.Paths.BepInExRootPath); } catch (Exception e) { Plugin.Instance.Log.LogError(e.ToString()); } } }); // F8
             Edge(0x78, d => { if (d) { try { TypeDump.RunRequest(BepInEx.Paths.BepInExRootPath); Plugin.Instance.Log.LogInfo("Wrote sotf-request.txt"); } catch (Exception e) { Plugin.Instance.Log.LogError(e.ToString()); } } }); // F9
             Edge(0x79, d => { if (d) { var c = Camera.main; Hooks.SpawnExplosion(c.transform.position + c.transform.forward * 8f); } }); // F10: test explosion 8 m ahead
             Edge(0x75, d => { if (d) ToggleWalk(); }); // F6: Steve drives
+            Edge(0x7A, d => { if (d) { _mcMode = false; _walk = false; _mcScreen = false; Hooks.Unstick(); } }); // F11: undo everything
             if (!_mcMode) return;
             if (_walk && !_mcScreen)
             {
@@ -185,6 +192,21 @@ namespace SotfPassthrough
             catch (Exception e) { Plugin.Instance.Log.LogInfo("bad message: " + e.Message); }
         }
 
+        /// <summary>
+        /// Steve must never be inside the barrier ground (he would drop through it into the void): if Minecraft's feet are below the
+        /// surface Minecraft has under them, put him back on it. The surface is the same rounding the ground columns use.
+        /// </summary>
+        void GuardGround()
+        {
+            if (Time.unscaledTime < _nextGuard) return;
+            _nextGuard = Time.unscaledTime + 0.1f;
+            float mcFeetY = _mcFeet.y + _yOffset;
+            if (Ground(_mcFeet + Vector3.up * 1.5f, out float g)) _lastSurface = (float)Math.Floor(g + _yOffset + 0.5f);
+            if (float.IsNaN(_lastSurface)) return;
+            if (mcFeetY < _lastSurface - 0.02f)
+                _ws.Send("{\"t\":\"setpos\",\"p\":[" + (-_mcFeet.x).ToString("R", C) + "," + (_lastSurface + 0.01f).ToString("R", C) + "," + _mcFeet.z.ToString("R", C) + "]}");
+        }
+
         void ToggleWalk()
         {
             _walk = !_walk;
@@ -193,7 +215,7 @@ namespace SotfPassthrough
                 var cam = Camera.main;
                 if (cam == null || !Hooks.TryGetBody(out var body)) { _walk = false; Plugin.Instance.Log.LogInfo("walk: could not find the player body"); return; }
                 _camOffset = cam.transform.position - body;
-                _haveMcPos = false;
+                _haveMcPos = false; _lastSurface = float.NaN;
                 if (!_mcMode) { _mcMode = true; Hooks.SetInputBlocked(true); }
                 Hooks.SetMoveBlocked(true);
                 _ws.Send("{\"t\":\"walk\",\"on\":true}");

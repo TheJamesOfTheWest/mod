@@ -28,7 +28,7 @@ namespace SotfPassthrough
             "Sons.StatSystem.HealthStat", "ExplosionImpactData", "MeleeImpactData", "ProjectileImpactData", "Explode",
             "Sons.Gameplay.TreeCutting.TreeCutManager", "Sons.Gameplay.TreeCutting.TreeCutEventReceiver", "Sons.Gameplay.TreeCutting.FallingTreeSpawner", "Sons.Gameplay.TreeCutting.FallingTreeDamage",
             "Sons.Gameplay.TreeCutting.TreeCutGrid", "treeHitTrigger", "Sons.Gameplay.MeleeWeapon", "Sons.Weapon.MeleeWeaponController",
-            "Vitals", "TheForest.Utils.LocalPlayer"
+            "Vitals", "TheForest.Utils.LocalPlayer", "playerHitReactions", "IKnockDownReceiver", "PlayerAnimatorControl", "PlayerAnimatorControl+KnockdownType"
         };
 
         /// <summary>F9: full member dump (methods, properties, fields, enum values) of the types listed in BepInEx\dump-request.txt (one full name per line), else a built-in list.</summary>
