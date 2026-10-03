@@ -71,6 +71,8 @@ public class PassthroughClient implements ClientModInitializer {
 	/** Server ticks until the setup commands run (the player isn't in the player list yet when JOIN fires). */
 	private static int setupIn = -1;
 	private static int respawnIn;
+	/** Whether a screen (inventory) was open at the last tick, so the host can free its mouse. */
+	private static boolean screenOpen;
 
 	@Override
 	public void onInitializeClient() {
@@ -97,6 +99,12 @@ public class PassthroughClient implements ClientModInitializer {
 		if (minecraft.player != null && minecraft.gui.screen() instanceof DeathScreen && --respawnIn <= 0) {
 			respawnIn = 40;
 			minecraft.player.respawn();
+		}
+
+		boolean open = minecraft.player != null && minecraft.gui.screen() != null && !(minecraft.gui.screen() instanceof DeathScreen);
+		if (open != screenOpen) {
+			screenOpen = open;
+			Passthrough.events.accept("{\"t\":\"screen\",\"open\":" + open + "}");
 		}
 
 		if (!configured) {

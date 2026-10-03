@@ -5,6 +5,8 @@ import dev.rehan.passthrough.Passthrough;
 import dev.rehan.passthrough.client.mixin.KeyMappingAccessor;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.input.MouseButtonEvent;
+import net.minecraft.client.input.MouseButtonInfo;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.entity.player.Inventory;
@@ -12,6 +14,10 @@ import org.lwjgl.sdl.SDLVideo;
 
 /** Host input, applied on the client thread: the host window has the focus, so Minecraft never sees these itself. */
 final class ClientInput {
+	/** The host's virtual cursor while a screen (inventory) is open, in GUI-scaled coordinates. */
+	private static double cursorX;
+	private static double cursorY;
+
 	private ClientInput() {
 	}
 
@@ -63,6 +69,36 @@ final class ClientInput {
 					Inventory inventory = player.getInventory();
 					int size = Inventory.getSelectionSize();
 					inventory.setSelectedSlot(Math.floorMod(inventory.getSelectedSlot() - m.get("d").getAsInt(), size));
+				}
+			}
+			case "mouse" -> {
+				// {"t":"mouse","x":px,"y":px}: the host's virtual cursor in Minecraft-window pixels, applied only while a screen is open
+				if (minecraft.gui.screen() != null) {
+					double scale = Math.max(1, minecraft.getWindow().getGuiScale());
+					double x = m.get("x").getAsDouble() / scale, y = m.get("y").getAsDouble() / scale;
+					double dx = x - cursorX, dy = y - cursorY;
+					cursorX = x;
+					cursorY = y;
+					minecraft.gui.screen().mouseMoved(x, y);
+					if (minecraft.mouseHandler.isLeftPressed()) {
+						minecraft.gui.screen().mouseDragged(new MouseButtonEvent(x, y, new MouseButtonInfo(0, 0)), dx, dy);
+					}
+				}
+			}
+			case "click" -> {
+				// {"t":"click","b":0 left | 1 right | 2 middle,"down":bool}
+				if (minecraft.gui.screen() != null) {
+					MouseButtonEvent event = new MouseButtonEvent(cursorX, cursorY, new MouseButtonInfo(m.get("b").getAsInt(), 0));
+					if (m.get("down").getAsBoolean()) {
+						minecraft.gui.screen().mouseClicked(event, false);
+					} else {
+						minecraft.gui.screen().mouseReleased(event);
+					}
+				}
+			}
+			case "mscroll" -> {
+				if (minecraft.gui.screen() != null) {
+					minecraft.gui.screen().mouseScrolled(cursorX, cursorY, 0.0, m.get("d").getAsDouble());
 				}
 			}
 			case "hud" -> {
