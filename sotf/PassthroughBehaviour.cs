@@ -27,6 +27,8 @@ namespace SotfPassthrough
         readonly bool[] _prev = new bool[256];
         float _lastScroll;
         float _nextReassert;
+        readonly bool[] _prevText = new bool[256];
+        readonly float[] _repeatAt = new float[256];
         bool _walk;                   // F6: Steve drives, the game's body follows Minecraft's player
         Vector3 _camOffset;           // camera minus body root, measured when walking starts
         Vector3 _mcFeet; float _mcEye = 1.62f; bool _haveMcPos;
@@ -114,7 +116,7 @@ namespace SotfPassthrough
                 Edge(0x20, d => Key("jump", d)); Edge(0xA0, d => Key("sneak", d)); Edge(0xA2, d => Key("sprint", d));
             }
             if (Time.unscaledTime > _nextReassert) { _nextReassert = Time.unscaledTime + 2f; Hooks.SetInputBlocked(true); }
-            Edge(0x45, d => { if (!d) return; if (_mcScreen) Key("escape", true); else { Key("inventory", true); Key("inventory", false); } }); // E: Minecraft inventory
+            Edge(0x45, d => { if (d && !_mcScreen) { Key("inventory", true); Key("inventory", false); } }); // E opens the Minecraft inventory (once open, keys go to the screen, so E can close it or type into a search box)
             Edge(0x1B, d => { if (d && _mcScreen) Key("escape", true); });                                                                              // Esc closes a Minecraft screen
             if (_mcScreen)
             {
@@ -124,6 +126,14 @@ namespace SotfPassthrough
                     _cx = Mathf.Clamp(_cx + delta.x * 1.5f, 0f, Screen.width - 1f);
                     _cy = Mathf.Clamp(_cy - delta.y * 1.5f, 0f, Screen.height - 1f);
                     if (_cx != _lastCx || _cy != _lastCy) { _lastCx = _cx; _lastCy = _cy; _ws.Send("{\"t\":\"mouse\",\"x\":" + _cx.ToString("R", C) + ",\"y\":" + _cy.ToString("R", C) + "}"); }
+                }
+                catch (Exception) { }
+                ForwardScreenKeys();
+                try
+                {
+                    float sc = UnityEngine.InputSystem.Mouse.current.scroll.ReadValue().y / 120f;
+                    if (sc > 0.01f) _ws.Send("{\"t\":\"mscroll\",\"d\":1}");
+                    else if (sc < -0.01f) _ws.Send("{\"t\":\"mscroll\",\"d\":-1}");
                 }
                 catch (Exception) { }
                 Edge(0x01, d => _ws.Send("{\"t\":\"click\",\"b\":0,\"down\":" + (d ? "true" : "false") + "}"));
@@ -209,6 +219,57 @@ namespace SotfPassthrough
             if (float.IsNaN(_lastSurface)) return;
             if (mcFeetY < _lastSurface - 0.6f)
                 _ws.Send("{\"t\":\"setpos\",\"p\":[" + (-_mcFeet.x).ToString("R", C) + "," + (_lastSurface + 0.01f).ToString("R", C) + "," + _mcFeet.z.ToString("R", C) + "]}");
+        }
+
+        static readonly int[] ScreenKeys = BuildScreenKeys();
+
+        static int[] BuildScreenKeys()
+        {
+            var l = new List<int>();
+            for (int v = 0x30; v <= 0x39; v++) l.Add(v);
+            for (int v = 0x41; v <= 0x5A; v++) l.Add(v);
+            l.AddRange(new[] { 0x20, 0xBA, 0xBB, 0xBC, 0xBD, 0xBE, 0xBF, 0xC0, 0xDB, 0xDC, 0xDD, 0xDE, 0x08, 0x0D, 0x09, 0x2E, 0x25, 0x26, 0x27, 0x28, 0x24, 0x23 });
+            return l.ToArray();
+        }
+
+        /// <summary>SDL scancode (what Minecraft 26 uses) for a Windows virtual key; 0 if none.</summary>
+        static int Scan(int vk)
+        {
+            if (vk >= 0x41 && vk <= 0x5A) return 4 + (vk - 0x41);
+            if (vk >= 0x31 && vk <= 0x39) return 30 + (vk - 0x31);
+            switch (vk)
+            {
+                case 0x30: return 39; case 0x0D: return 40; case 0x08: return 42; case 0x09: return 43; case 0x20: return 44;
+                case 0xBD: return 45; case 0xBB: return 46; case 0xDB: return 47; case 0xDD: return 48; case 0xDC: return 49;
+                case 0xBA: return 51; case 0xDE: return 52; case 0xC0: return 53; case 0xBC: return 54; case 0xBE: return 55; case 0xBF: return 56;
+                case 0x2E: return 76; case 0x24: return 74; case 0x23: return 77;
+                case 0x27: return 79; case 0x25: return 80; case 0x28: return 81; case 0x26: return 82;
+            }
+            return 0;
+        }
+
+        /// <summary>While a Minecraft screen is open every typing key goes to it as a key press plus (when it makes a character) typed text, with key repeat.</summary>
+        void ForwardScreenKeys()
+        {
+            bool shift = RawInput.Down(0x10), ctrl = RawInput.Down(0x11), alt = RawInput.Down(0x12);
+            int mods = (shift ? 3 : 0) | (ctrl ? 192 : 0) | (alt ? 768 : 0);
+            float now = Time.unscaledTime;
+            foreach (int vk in ScreenKeys)
+            {
+                bool d = RawInput.Down(vk);
+                bool fire = false;
+                if (d && !_prevText[vk]) { fire = true; _repeatAt[vk] = now + 0.4f; }
+                else if (d && now > _repeatAt[vk]) { fire = true; _repeatAt[vk] = now + 0.04f; }
+                _prevText[vk] = d;
+                if (!fire) continue;
+                int sc = Scan(vk);
+                if (sc != 0) _ws.Send("{\"t\":\"skey\",\"sc\":" + sc + ",\"mods\":" + mods + "}");
+                if (!ctrl && !alt)
+                {
+                    int cp = RawInput.CharFor(vk, shift);
+                    if (cp >= 32) _ws.Send("{\"t\":\"char\",\"c\":" + cp + "}");
+                }
+            }
         }
 
         void ToggleWalk()

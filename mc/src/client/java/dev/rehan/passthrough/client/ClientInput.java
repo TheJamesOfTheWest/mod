@@ -6,6 +6,8 @@ import dev.rehan.passthrough.client.mixin.KeyMappingAccessor;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import dev.rehan.passthrough.client.mixin.MouseHandlerAccessor;
+import net.minecraft.client.input.CharacterEvent;
+import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.client.input.MouseButtonInfo;
 import net.minecraft.client.player.LocalPlayer;
@@ -114,6 +116,19 @@ final class ClientInput {
 					} else {
 						minecraft.gui.screen().mouseReleased(event);
 					}
+				}
+			}
+			case "skey" -> {
+				// {"t":"skey","sc":SDL scancode,"mods":SDL modifier mask}: a key press for the open screen (search box, shortcuts, closing it)
+				if (minecraft.gui.screen() != null) {
+					int sc = m.get("sc").getAsInt();
+					minecraft.gui.screen().keyPressed(new KeyEvent(sc, sc, m.has("mods") ? m.get("mods").getAsInt() : 0));
+				}
+			}
+			case "char" -> {
+				// {"t":"char","c":unicode code point}: typed text for the open screen
+				if (minecraft.gui.screen() != null) {
+					minecraft.gui.screen().charTyped(new CharacterEvent(m.get("c").getAsInt()));
 				}
 			}
 			case "mscroll" -> {
