@@ -3,7 +3,7 @@
 #include <windows.h>
 #include <reshade.hpp>
 
-extern "C" __declspec(dllexport) extern const char *NAME = "Minecraft Passthrough";
+extern "C" __declspec(dllexport) const char *NAME = "Minecraft Passthrough";
 extern "C" __declspec(dllexport) const char *DESCRIPTION = "Draws Minecraft (Fabric passthrough mod) into Sons of the Forest, depth-tested against the game's depth buffer.";
 
 BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID)
