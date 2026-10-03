@@ -27,6 +27,9 @@ namespace SotfPassthrough
         readonly bool[] _prev = new bool[256];
         float _lastScroll;
         float _nextReassert;
+        bool _mcScreen;               // a Minecraft screen (inventory) is open: the virtual cursor drives it
+        float _cx, _cy;               // virtual cursor, in Minecraft-window pixels
+        float _lastCx = -1, _lastCy = -1;
         float _nextLog;
         float _yOffset; bool _haveOffset;
         readonly HashSet<long> _sampled = new HashSet<long>();
@@ -45,7 +48,7 @@ namespace SotfPassthrough
                 Plugin.Instance.Log.LogInfo("status: camera=" + (cam == null ? "none" : cam.name + " pos=" + cam.transform.position) + " ws=" + _ws.Connected + " offset=" + (_haveOffset ? _yOffset.ToString("0.00") : "unset") + " groundColumnsSent=" + _sampled.Count);
             }
             if (cam == null || !_ws.Connected) { _shm.Write(false, 0.3f, 1000f, 60f, 0, 0, 0, 0, 0, 0); return; }
-            if (_ws.JustConnected) { _ws.JustConnected = false; _sampled.Clear(); _retryAt.Clear(); _haveOffset = false; _ws.Send("{\"t\":\"clear\"}"); _ws.Send("{\"t\":\"view\",\"w\":" + Screen.width + ",\"h\":" + Screen.height + "}"); }
+            if (_ws.JustConnected) { _ws.JustConnected = false; _sampled.Clear(); _retryAt.Clear(); _haveOffset = false; _ws.Send("{\"t\":\"clear\"}"); _ws.Send("{\"t\":\"view\",\"w\":" + Screen.width + ",\"h\":" + Screen.height + "}"); _ws.Send("{\"t\":\"blocksync\",\"r\":48}"); Hooks.ClearBlocks(); }
             while (_ws.TryReceive(out string incoming)) HandleMessage(incoming);
 
             var t = cam.transform;
@@ -90,6 +93,22 @@ namespace SotfPassthrough
             Edge(0x79, d => { if (d) { var c = Camera.main; Hooks.SpawnExplosion(c.transform.position + c.transform.forward * 8f); } }); // F10: test explosion 8 m ahead
             if (!_mcMode) return;
             if (Time.unscaledTime > _nextReassert) { _nextReassert = Time.unscaledTime + 2f; Hooks.SetInputBlocked(true); }
+            Edge(0x45, d => { if (!d) return; if (_mcScreen) Key("escape", true); else { Key("inventory", true); Key("inventory", false); } }); // E: Minecraft inventory
+            Edge(0x1B, d => { if (d && _mcScreen) Key("escape", true); });                                                                              // Esc closes a Minecraft screen
+            if (_mcScreen)
+            {
+                try
+                {
+                    var delta = UnityEngine.InputSystem.Mouse.current.delta.ReadValue();
+                    _cx = Mathf.Clamp(_cx + delta.x * 1.5f, 0f, Screen.width - 1f);
+                    _cy = Mathf.Clamp(_cy - delta.y * 1.5f, 0f, Screen.height - 1f);
+                    if (_cx != _lastCx || _cy != _lastCy) { _lastCx = _cx; _lastCy = _cy; _ws.Send("{\"t\":\"mouse\",\"x\":" + _cx.ToString("R", C) + ",\"y\":" + _cy.ToString("R", C) + "}"); }
+                }
+                catch (Exception) { }
+                Edge(0x01, d => _ws.Send("{\"t\":\"click\",\"b\":0,\"down\":" + (d ? "true" : "false") + "}"));
+                Edge(0x02, d => _ws.Send("{\"t\":\"click\",\"b\":1,\"down\":" + (d ? "true" : "false") + "}"));
+                return;
+            }
             Edge(0x01, d => { Key("attack", d); if (d) Hooks.TryChop(Camera.main); });
             Edge(0x02, d => Key("use", d));
             Edge(0x04, d => Key("pick", d));
@@ -110,10 +129,38 @@ namespace SotfPassthrough
             {
                 using var doc = JsonDocument.Parse(msg);
                 var root = doc.RootElement;
-                if (!root.TryGetProperty("t", out var t) || t.GetString() != "explosion") return;
-                var p = root.GetProperty("pos");
-                float mx = (float)p[0].GetDouble(), my = (float)p[1].GetDouble(), mz = (float)p[2].GetDouble();
-                Hooks.SpawnExplosion(new Vector3(-mx, my - _yOffset, mz));
+                if (!root.TryGetProperty("t", out var t)) return;
+                switch (t.GetString())
+                {
+                    case "explosion":
+                    {
+                        var p = root.GetProperty("pos");
+                        float mx = (float)p[0].GetDouble(), my = (float)p[1].GetDouble(), mz = (float)p[2].GetDouble();
+                        float r = root.TryGetProperty("r", out var rr) ? (float)rr.GetDouble() : 0f;
+                        Hooks.SpawnExplosion(new Vector3(-mx, my - _yOffset, mz), r);
+                        break;
+                    }
+                    case "blocks":
+                    {
+                        var set = new List<int>(); var clear = new List<int>();
+                        foreach (var v in root.GetProperty("set").EnumerateArray()) set.Add(v.GetInt32());
+                        foreach (var v in root.GetProperty("clear").EnumerateArray()) clear.Add(v.GetInt32());
+                        Hooks.ApplyBlocks(set, clear, _yOffset);
+                        break;
+                    }
+                    case "screen":
+                    {
+                        bool open = root.GetProperty("open").GetBoolean();
+                        if (open != _mcScreen)
+                        {
+                            _mcScreen = open;
+                            _cx = Screen.width * 0.5f; _cy = Screen.height * 0.5f; _lastCx = _lastCy = -1;
+                            Hooks.SetLookBlocked(open);
+                            Plugin.Instance.Log.LogInfo("Minecraft screen " + (open ? "open" : "closed"));
+                        }
+                        break;
+                    }
+                }
             }
             catch (Exception e) { Plugin.Instance.Log.LogInfo("bad message: " + e.Message); }
         }
