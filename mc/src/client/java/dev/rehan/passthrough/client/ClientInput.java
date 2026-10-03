@@ -105,6 +105,8 @@ final class ClientInput {
 			}
 			case "click" -> {
 				// {"t":"click","b":0 left | 1 right | 2 middle,"down":bool}
+				Passthrough.LOG.info("host click b={} down={} at ({},{}) screen={}", m.get("b").getAsInt(), m.get("down").getAsBoolean(), cursorX, cursorY,
+					minecraft.gui.screen() == null ? "none" : minecraft.gui.screen().getClass().getSimpleName());
 				if (minecraft.gui.screen() != null) {
 					MouseButtonEvent event = new MouseButtonEvent(cursorX, cursorY, new MouseButtonInfo(m.get("b").getAsInt(), 0));
 					if (m.get("down").getAsBoolean()) {

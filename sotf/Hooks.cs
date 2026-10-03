@@ -125,10 +125,39 @@ namespace SotfPassthrough
                     go.transform.position = new Vector3(-(set[i] + 0.5f), set[i + 1] + 0.5f - yOffset, set[i + 2] + 0.5f);
                     var box = go.AddComponent<BoxCollider>();
                     box.size = Vector3.one;
+                    box.enabled = _blocksEnabled;
                     Blocks[k] = go;
                 }
             }
             catch (Exception e) { Log("ApplyBlocks failed: " + e); }
+        }
+
+        static bool _wasKinematic;
+        static bool _blocksEnabled = true;
+
+        /// <summary>While Steve drives the body is placed every frame: stop the game's physics from pushing it around (the cause of bouncing).</summary>
+        public static void SetBodyKinematic(bool on)
+        {
+            try
+            {
+                var rb = TheForest.Utils.LocalPlayer.Rigidbody;
+                if (rb == null) return;
+                if (on) { _wasKinematic = rb.isKinematic; rb.isKinematic = true; }
+                else rb.isKinematic = _wasKinematic;
+            }
+            catch (Exception e) { Log("SetBodyKinematic failed: " + e.Message); }
+        }
+
+        /// <summary>Minecraft's own physics handles the blocks while Steve drives, so the game's colliders for them must not push the body.</summary>
+        public static void SetBlocksEnabled(bool on)
+        {
+            _blocksEnabled = on;
+            foreach (var go in Blocks.Values)
+            {
+                if (go == null) continue;
+                var c = go.GetComponent<BoxCollider>();
+                if (c != null) c.enabled = on;
+            }
         }
 
         public static void ClearBlocks()
@@ -207,7 +236,7 @@ namespace SotfPassthrough
         /// <summary>F11: undo everything we switched off, and heal.</summary>
         public static void Unstick()
         {
-            SetInputBlocked(false); SetLookBlocked(false); SetMoveBlocked(false); HideBody(false);
+            SetInputBlocked(false); SetLookBlocked(false); SetMoveBlocked(false); HideBody(false); SetBodyKinematic(false); SetBlocksEnabled(true);
             try { TheForest.Utils.LocalPlayer.Vitals.SetFullHealth(); } catch (Exception) { }
             Log("unstick: input restored, body shown, health restored");
         }

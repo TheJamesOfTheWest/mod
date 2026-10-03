@@ -187,7 +187,7 @@ namespace SotfPassthrough
                             _mcScreen = open;
                             _cx = Screen.width * 0.5f; _cy = Screen.height * 0.5f; _lastCx = _lastCy = -1;
                             Hooks.SetLookBlocked(open);
-                            Plugin.Instance.Log.LogInfo("Minecraft screen " + (open ? "open" : "closed"));
+                            Plugin.Instance.Log.LogInfo("Minecraft screen " + (open ? "open" : "closed") + " (cursor starts at " + _cx + "," + _cy + ", window " + Screen.width + "x" + Screen.height + ", game focused: " + RawInput.GameFocused() + ")");
                         }
                         break;
                     }
@@ -221,12 +221,12 @@ namespace SotfPassthrough
                 _camOffset = cam.transform.position - body;
                 _haveMcPos = false; _lastSurface = float.NaN;
                 if (!_mcMode) { _mcMode = true; Hooks.SetInputBlocked(true); }
-                Hooks.SetMoveBlocked(true);
+                Hooks.SetMoveBlocked(true); Hooks.SetBodyKinematic(true); Hooks.SetBlocksEnabled(false);
                 _ws.Send("{\"t\":\"walk\",\"on\":true}");
             }
             else
             {
-                Hooks.SetMoveBlocked(false);
+                Hooks.SetMoveBlocked(false); Hooks.SetBodyKinematic(false); Hooks.SetBlocksEnabled(true);
                 _ws.Send("{\"t\":\"walk\",\"on\":false}");
                 foreach (var k in new[] { "forward", "back", "left", "right", "jump", "sneak", "sprint" }) Key(k, false);
             }
