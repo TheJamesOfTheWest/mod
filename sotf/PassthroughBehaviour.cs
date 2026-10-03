@@ -21,12 +21,13 @@ namespace SotfPassthrough
         static readonly CultureInfo C = CultureInfo.InvariantCulture;
 
         WsClient _ws;
+        HostShm _shm;
         float _nextLog;
         float _yOffset; bool _haveOffset;
         readonly HashSet<long> _sampled = new HashSet<long>();
         List<(int dx, int dz)> _spiral;
 
-        void Awake() { _ws = new WsClient("ws://127.0.0.1:25599"); }
+        void Awake() { _ws = new WsClient("ws://127.0.0.1:25599"); _shm = new HostShm(); }
 
         void LateUpdate()
         {
@@ -36,7 +37,7 @@ namespace SotfPassthrough
                 _nextLog = Time.unscaledTime + 5f;
                 Plugin.Instance.Log.LogInfo("status: camera=" + (cam == null ? "none" : cam.name + " pos=" + cam.transform.position) + " ws=" + _ws.Connected + " offset=" + (_haveOffset ? _yOffset.ToString("0.00") : "unset") + " groundColumnsSent=" + _sampled.Count);
             }
-            if (cam == null || !_ws.Connected) return;
+            if (cam == null || !_ws.Connected) { _shm.Write(false, 0.3f, 1000f, 60f, 0, 0, 0, 0, 0, 0); return; }
             if (_ws.JustConnected) { _ws.JustConnected = false; _sampled.Clear(); _haveOffset = false; _ws.Send("{\"t\":\"clear\"}"); _ws.Send("{\"t\":\"view\",\"w\":" + Screen.width + ",\"h\":" + Screen.height + "}"); }
             while (_ws.TryReceive(out _)) { } // TODO: handle "explosion" etc.
 
@@ -61,6 +62,7 @@ namespace SotfPassthrough
             sb.Append(",\"fp\":true");
             sb.Append(",\"pl\":[").Append((-feet.x).ToString("R", C)).Append(',').Append((feet.y + _yOffset).ToString("R", C)).Append(',').Append(feet.z.ToString("R", C)).Append("]}");
             _ws.Send(sb.ToString());
+            _shm.Write(true, cam.nearClipPlane, cam.farClipPlane, cam.fieldOfView, yaw, pitch, 0f, -pos.x, pos.y + _yOffset, pos.z);
 
             SampleGround(feet);
         }
