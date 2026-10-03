@@ -25,6 +25,8 @@ namespace SotfPassthrough
         float _nextLog;
         float _yOffset; bool _haveOffset;
         readonly HashSet<long> _sampled = new HashSet<long>();
+        // columns whose raycast found nothing (water, holes, not streamed in): retry later so they don't starve the nearer-first probe budget
+        readonly Dictionary<long, float> _retryAt = new Dictionary<long, float>();
         List<(int dx, int dz)> _spiral;
 
         void Awake() { _ws = new WsClient("ws://127.0.0.1:25599"); _shm = new HostShm(); }
@@ -38,7 +40,7 @@ namespace SotfPassthrough
                 Plugin.Instance.Log.LogInfo("status: camera=" + (cam == null ? "none" : cam.name + " pos=" + cam.transform.position) + " ws=" + _ws.Connected + " offset=" + (_haveOffset ? _yOffset.ToString("0.00") : "unset") + " groundColumnsSent=" + _sampled.Count);
             }
             if (cam == null || !_ws.Connected) { _shm.Write(false, 0.3f, 1000f, 60f, 0, 0, 0, 0, 0, 0); return; }
-            if (_ws.JustConnected) { _ws.JustConnected = false; _sampled.Clear(); _haveOffset = false; _ws.Send("{\"t\":\"clear\"}"); _ws.Send("{\"t\":\"view\",\"w\":" + Screen.width + ",\"h\":" + Screen.height + "}"); }
+            if (_ws.JustConnected) { _ws.JustConnected = false; _sampled.Clear(); _retryAt.Clear(); _haveOffset = false; _ws.Send("{\"t\":\"clear\"}"); _ws.Send("{\"t\":\"view\",\"w\":" + Screen.width + ",\"h\":" + Screen.height + "}"); }
             while (_ws.TryReceive(out _)) { } // TODO: handle "explosion" etc.
 
             var t = cam.transform;
@@ -91,8 +93,10 @@ namespace SotfPassthrough
             {
                 int mx = px + dx, mz = pz + dz; long key = ((long)mx << 32) ^ (uint)mz;
                 if (_sampled.Contains(key)) continue;
+                if (_retryAt.TryGetValue(key, out float at) && Time.unscaledTime < at) continue;
                 if (++probes > ProbesPerFrame) break;
-                if (!Ground(new Vector3(-(mx + 0.5f), feet.y + 1.5f, mz + 0.5f), out float g)) continue;
+                if (!Ground(new Vector3(-(mx + 0.5f), feet.y + 1.5f, mz + 0.5f), out float g)) { _retryAt[key] = Time.unscaledTime + 3f; continue; }
+                _retryAt.Remove(key);
                 _sampled.Add(key);
                 int top = (int)Math.Floor(g + _yOffset + 0.5f) - 1;
                 if (sb.Length > 0) sb.Append(',');
