@@ -179,6 +179,7 @@ public final class FrameExporter {
 
 		long now = System.nanoTime();
 		if (c.busy && now - c.busySince < STUCK_NANOS) {
+			skippedBusy++;
 			return;
 		}
 
@@ -222,7 +223,13 @@ public final class FrameExporter {
 		ringNext = (ringNext + 1) % RING;
 	}
 
+	/** Frames not exported because the previous readback of the same slot had not finished (the GPU is the bottleneck). */
+	static volatile long skippedBusy;
+	/** Smoothed time from capture to publish, in ms: render + GPU copy + the fence wait. */
+	static volatile float publishMs;
+
 	private static void publish(final Capture c) {
+		publishMs = publishMs * 0.9f + (System.nanoTime() - c.captureNanos) * 1e-6f * 0.1f;
 		try {
 			MemorySegment m = shm.segment;
 			int slot = slotNext;

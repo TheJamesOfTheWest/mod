@@ -134,9 +134,9 @@ public class PassthroughClient implements ClientModInitializer {
 			HostState.Pose pose = HostState.live();
 			long cams = HostState.camMessages, pub = FrameExporter.published();
 			if (pose != null || cams != lastCamMessages) {
-				Passthrough.LOG.info("status: host={} cam/s={} exports/s={} frame={}x{} fov={} screen={} walk={} tris={}", pose != null, cams - lastCamMessages, pub - lastPublished,
+				Passthrough.LOG.info("status: host={} cam/s={} exports/s={} frame={}x{} fov={} screen={} walk={} tris={} skippedBusy={} capToPublishMs={}", pose != null, cams - lastCamMessages, pub - lastPublished,
 					FrameExporter.lastWidth, FrameExporter.lastHeight, pose == null ? "-" : String.format("%.1f", pose.fov()), minecraft.gui.screen() == null ? "none" : minecraft.gui.screen().getClass().getSimpleName(),
-					Passthrough.walk, dev.rehan.passthrough.sky.HostTris.triangleCount());
+					Passthrough.walk, dev.rehan.passthrough.sky.HostTris.triangleCount(), FrameExporter.skippedBusy, String.format("%.1f", FrameExporter.publishMs));
 			}
 
 			lastCamMessages = cams;

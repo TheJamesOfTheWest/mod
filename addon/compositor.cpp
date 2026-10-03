@@ -62,6 +62,11 @@ namespace
 	bool g_hasFrame = false;
 	float g_mcNear = 0.05f, g_mcFar = 2048.0f;
 	int32_t g_mcFlags = 7;
+	// telemetry over each 5 s log interval: how old the shown Minecraft frame is, and how far its pose is from the host's current one
+	int64_t g_mcCaptureNs = 0;
+	unsigned g_uploads = 0, g_ageN = 0;
+	double g_ageSum = 0.0, g_ageMax = 0.0;
+	float g_maxYawErr = 0.0f, g_maxPitchErr = 0.0f;
 
 	template <typename T>
 	T read(const uint8_t *p)
@@ -258,6 +263,8 @@ namespace
 		g_mcPose.y = read<double>(desc + 56);
 		g_mcPose.z = read<double>(desc + 64);
 		g_mcPose.valid = true;
+		g_mcCaptureNs = read<int64_t>(desc + 88); // Minecraft's System.nanoTime() at capture: the same clock as QueryPerformanceCounter on Windows
+		++g_uploads;
 		g_hasFrame = true;
 	}
 
@@ -347,9 +354,14 @@ namespace
 			{
 				nextLog = GetTickCount() + 5000;
 				lastOn = on;
-				char msg[256];
-				snprintf(msg, sizeof(msg), "MCPassthrough status: hostActive=%d hostMap=%d mcMap=%d mcFrame=%d mc=%ux%u backbuffer=%ux%u hostPlanes=%.2f..%.1f",
-					int(g_active.load()), g_hostView != nullptr, g_view != nullptr, int(g_hasFrame), g_width, g_height, bw, bh, g_hostNear.load(), g_hostFar.load());
+				char msg[512];
+				snprintf(msg, sizeof(msg), "MCPassthrough status: hostActive=%d hostMap=%d mcMap=%d mcFrame=%d mc=%ux%u backbuffer=%ux%u hostPlanes=%.2f..%.1f"
+					" | 5s: mcAgeMs mean=%.0f max=%.0f maxYawErr=%.1f maxPitchErr=%.1f uploads=%u frames=%u mcFov=%.1f",
+					int(g_active.load()), g_hostView != nullptr, g_view != nullptr, int(g_hasFrame), g_width, g_height, bw, bh, g_hostNear.load(), g_hostFar.load(),
+					g_ageN ? g_ageSum / g_ageN : 0.0, g_ageMax, g_maxYawErr, g_maxPitchErr, g_uploads, g_ageN, g_mcPose.fov);
+				g_ageSum = g_ageMax = 0.0;
+				g_ageN = g_uploads = 0;
+				g_maxYawErr = g_maxPitchErr = 0.0f;
 				reshade::log::message(reshade::log::level::info, msg);
 			}
 		}
@@ -404,6 +416,18 @@ namespace
 		if (const effect_uniform_variable v = runtime->find_uniform_variable(kEffect, "PosePrediction"); v.handle != 0)
 			runtime->get_uniform_value_float(v, &predict, 1);
 		const bool warp = host.valid && g_mcPose.valid && !g_cameraLocked;
+		if (warp && g_mcCaptureNs != 0)
+		{
+			LARGE_INTEGER q, f;
+			QueryPerformanceCounter(&q);
+			QueryPerformanceFrequency(&f);
+			const double ageMs = (double(q.QuadPart) * 1e9 / double(f.QuadPart) - double(g_mcCaptureNs)) * 1e-6;
+			g_ageSum += ageMs;
+			g_ageMax = std::max(g_ageMax, ageMs);
+			++g_ageN;
+			g_maxYawErr = std::max(g_maxYawErr, std::fabs(std::fmod(host.yaw - g_mcPose.yaw + 540.0f, 360.0f) - 180.0f));
+			g_maxPitchErr = std::max(g_maxPitchErr, std::fabs(host.pitch - g_mcPose.pitch));
+		}
 		if (warp && prev.valid && predict != 0.0f)
 		{
 			auto delta = [](float a, float b) { float d = std::fmod(a - b + 540.0f, 360.0f) - 180.0f; return d; };
@@ -433,7 +457,7 @@ namespace
 		if (const effect_uniform_variable v = runtime->find_uniform_variable(kEffect, "WarpT"); v.handle != 0)
 			runtime->set_uniform_value_float(v, t[0], t[1], t[2]);
 		const float d2r = 3.14159265f / 180.0f;
-		const float tanHost = std::tan((warp ? host.fov : g_mcPose.fov) * d2r * 0.5f), tanMc = std::tan(g_mcPose.fov * d2r * 0.5f);
+		const float tanHost = std::tan((host.valid ? host.fov : g_mcPose.fov) * d2r * 0.5f), tanMc = std::tan(g_mcPose.fov * d2r * 0.5f);
 		if (const effect_uniform_variable v = runtime->find_uniform_variable(kEffect, "WarpTan"); v.handle != 0)
 			runtime->set_uniform_value_float(v, tanHost, tanMc, float(g_width) / float(g_height));
 	}

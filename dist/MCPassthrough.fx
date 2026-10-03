@@ -74,6 +74,14 @@ uniform float3 WarpTan = float3(0.7, 0.7, 1.7777);
 // Set by the add-on: GTA's camera position relative to Minecraft's, in Minecraft's camera space.
 uniform float3 WarpT = float3(0.0, 0.0, 0.0);
 
+// Minecraft renders a wider field of view than the picture (a margin for re-projection) and its frame may have another
+// aspect: where a host pixel sits in Minecraft's frame when both cameras look the same way.
+float2 straight_uv(float2 ouv)
+{
+	const float2 k = float2(WarpTan.x * BUFFER_WIDTH * BUFFER_RCP_HEIGHT / (WarpTan.y * WarpTan.z), WarpTan.x / WarpTan.y);
+	return (ouv - 0.5) * k + 0.5;
+}
+
 // GTA's picture at quarter size with mips: its blurred levels stand in for the light around each pixel.
 texture GtaLightTex { Width = BUFFER_WIDTH / 4; Height = BUFFER_HEIGHT / 4; Format = RGBA8; MipLevels = 7; };
 sampler sGtaLight { Texture = GtaLightTex; AddressU = CLAMP; AddressV = CLAMP; };
@@ -151,7 +159,7 @@ void PS_Composite(float4 pos : SV_Position, float2 uv : TEXCOORD, out float4 out
 	const float2 ouv = float2(uv.x, 1.0 - uv.y); // Minecraft's rows are bottom-up
 
 	// Where this GTA pixel's view ray lands in Minecraft's frame.
-	float2 muv = ouv;
+	float2 muv = straight_uv(ouv);
 	bool inside = true;
 	const float2 depthScale = DepthScaleAuto.x > 0.0 ? DepthScaleAuto : HostDepthRenderScale;
 	const float zh = host_linear(tex2Dlod(ReShade::DepthBuffer, float4(uv * depthScale, 0, 0)).x);
@@ -214,12 +222,12 @@ void PS_Composite(float4 pos : SV_Position, float2 uv : TEXCOORD, out float4 out
 		// Only accept it when that surface really lies on this pixel's view ray: take Minecraft's point at duv into GTA's
 		// camera and see where it lands. If the cameras differ it lands elsewhere, and drawing it here would paint a second,
 		// unwarped copy of Minecraft.
-		const float2 duv = ouv;
+		const float2 duv = straight_uv(ouv);
 		const float zd = mc_linear(tex2D(sDepth, duv).r);
-		if (tex2D(sWorld, duv).a > 0.0 && zd < 1e8)
+		if (all(abs(duv * 2.0 - 1.0) <= 1.0) && tex2D(sWorld, duv).a > 0.0 && zd < 1e8)
 		{
 			const float2 mcs = float2(WarpTan.y * WarpTan.z, WarpTan.y);
-			const float3 qd = float3((uv.x * 2.0 - 1.0) * mcs.x, (1.0 - uv.y * 2.0) * mcs.y, -1.0) * zd - WarpT;
+			const float3 qd = float3((duv.x * 2.0 - 1.0) * mcs.x, (duv.y * 2.0 - 1.0) * mcs.y, -1.0) * zd - WarpT;
 			const float3 gd = float3(dot(float3(WarpRow0.x, WarpRow1.x, WarpRow2.x), qd), dot(float3(WarpRow0.y, WarpRow1.y, WarpRow2.y), qd), dot(float3(WarpRow0.z, WarpRow1.z, WarpRow2.z), qd));
 			const float2 gn = gd.xy / -gd.z / float2(WarpTan.x * BUFFER_WIDTH * BUFFER_RCP_HEIGHT, WarpTan.x);
 			if (gd.z < -1e-3 && all(abs(gn - float2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0)) < 4.0 * BUFFER_PIXEL_SIZE))

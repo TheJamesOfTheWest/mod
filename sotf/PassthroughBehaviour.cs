@@ -19,6 +19,10 @@ namespace SotfPassthrough
         public PassthroughBehaviour(IntPtr ptr) : base(ptr) { }
 
         const int GroundRadius = 40, ProbesPerFrame = 160, GroundDepth = 6;
+        // Minecraft renders a wider field of view than the picture (tan-space factor), so the frame re-projected onto a camera that has turned since still covers the screen edges
+        const float Overscan = 1.3f;
+        // seconds the pose sent to Minecraft is extrapolated ahead, to cancel the age of the frame that comes back (tune from the add-on's mcAgeMs log)
+        const float Lead = 0.05f;
         static readonly CultureInfo C = CultureInfo.InvariantCulture;
 
         WsClient _ws;
@@ -49,6 +53,7 @@ namespace SotfPassthrough
         // columns whose raycast found nothing (water, holes, not streamed in): retry later so they don't starve the nearer-first probe budget
         readonly Dictionary<long, float> _retryAt = new Dictionary<long, float>();
         List<(int dx, int dz)> _spiral;
+        bool _pOk; float _pT, _pYaw, _pPitch, _wYaw, _wPitch; Vector3 _pPos, _vPos; // pose prediction state (angular and linear velocity, smoothed)
 
         void Awake() { _ws = new WsClient("ws://127.0.0.1:25599"); _shm = new HostShm(); }
 
@@ -59,6 +64,7 @@ namespace SotfPassthrough
             {
                 _nextLog = Time.unscaledTime + 5f;
                 Plugin.Instance.Log.LogInfo("status: camera=" + (cam == null ? "none" : cam.name + " pos=" + cam.transform.position) + " ws=" + _ws.Connected + " offset=" + (_haveOffset ? _yOffset.ToString("0.00") : "unset") + " groundColumnsSent=" + _sampled.Count);
+                if (cam != null) LogProjection(cam);
             }
             if (!_ws.Connected && (_mcMode || _mcScreen || _walk))
             {
@@ -106,11 +112,26 @@ namespace SotfPassthrough
 
             float yaw = (float)(Math.Atan2(fwd.x, fwd.z) * 180.0 / Math.PI);
             float pitch = (float)(-Math.Asin(Mathf.Clamp(fwd.y, -1f, 1f)) * 180.0 / Math.PI);
+            // Minecraft's frame comes back about 50-130 ms old: render it at where the camera is going, and let the add-on re-project the remainder
+            float ySend = yaw, pSend = pitch; Vector3 posSend = pos;
+            float dtp = Time.unscaledTime - _pT;
+            if (_pOk && dtp > 1e-4f && dtp < 0.1f && (pos - _pPos).magnitude < 5f)
+            {
+                _wYaw = Mathf.Lerp(_wYaw, Mathf.DeltaAngle(_pYaw, yaw) / dtp, 0.5f);
+                _wPitch = Mathf.Lerp(_wPitch, (pitch - _pPitch) / dtp, 0.5f);
+                _vPos = Vector3.Lerp(_vPos, (pos - _pPos) / dtp, 0.5f);
+                ySend = yaw + Mathf.Clamp(_wYaw * Lead, -20f, 20f);
+                pSend = Mathf.Clamp(pitch + Mathf.Clamp(_wPitch * Lead, -12f, 12f), -90f, 90f);
+                posSend = pos + Vector3.ClampMagnitude(_vPos * Lead, 0.6f);
+            }
+            else { _wYaw = _wPitch = 0f; _vPos = Vector3.zero; }
+            _pOk = true; _pT = Time.unscaledTime; _pYaw = yaw; _pPitch = pitch; _pPos = pos;
+            float mcFov = Mathf.Min(2f * Mathf.Atan(Mathf.Tan(cam.fieldOfView * 0.5f * Mathf.Deg2Rad) * Overscan) * Mathf.Rad2Deg, 140f);
             var sb = new StringBuilder(256);
             sb.Append("{\"t\":\"cam\",\"f\":").Append(Time.frameCount);
-            sb.Append(",\"p\":[").Append((-pos.x).ToString("R", C)).Append(',').Append((pos.y + _yOffset).ToString("R", C)).Append(',').Append(pos.z.ToString("R", C));
-            sb.Append("],\"r\":[").Append(yaw.ToString("R", C)).Append(',').Append(pitch.ToString("R", C)).Append(",0]");
-            sb.Append(",\"fov\":").Append(cam.fieldOfView.ToString("R", C)); // vertical FOV in Unity
+            sb.Append(",\"p\":[").Append((-posSend.x).ToString("R", C)).Append(',').Append((posSend.y + _yOffset).ToString("R", C)).Append(',').Append(posSend.z.ToString("R", C));
+            sb.Append("],\"r\":[").Append(ySend.ToString("R", C)).Append(',').Append(pSend.ToString("R", C)).Append(",0]");
+            sb.Append(",\"fov\":").Append(mcFov.ToString("R", C)); // vertical FOV Minecraft renders (the host's, widened by Overscan); the add-on gets the host's real one through shared memory
             sb.Append(",\"fp\":true");
             sb.Append(",\"pl\":[").Append((-feet.x).ToString("R", C)).Append(',').Append((feet.y + _yOffset).ToString("R", C)).Append(',').Append(feet.z.ToString("R", C)).Append("]}");
             _ws.Send(sb.ToString());
@@ -159,6 +180,19 @@ namespace SotfPassthrough
             }
             if (_mcMode && Time.unscaledTime > _nextHide) { _nextHide = Time.unscaledTime + 2f; Hooks.HideBody(true); }
             PollInput();
+        }
+
+        /// <summary>Does the projection we assume (vertical FOV, backbuffer aspect) match what Unity really renders with? One line per status interval.</summary>
+        void LogProjection(Camera cam)
+        {
+            try
+            {
+                var pm = cam.nonJitteredProjectionMatrix;
+                float vfovM = 2f * Mathf.Atan(1f / pm.m11) * Mathf.Rad2Deg, aspM = pm.m11 / pm.m00;
+                Dbg.Line("[proj] fov=" + cam.fieldOfView.ToString("0.00") + " fromMatrix=" + vfovM.ToString("0.00") + " aspect=" + cam.aspect.ToString("0.0000") + " fromMatrix=" + aspM.ToString("0.0000") + " physical=" + cam.usePhysicalProperties
+                    + " px=" + cam.pixelWidth + "x" + cam.pixelHeight + " scaled=" + cam.scaledPixelWidth + "x" + cam.scaledPixelHeight + " screen=" + Screen.width + "x" + Screen.height + " overscan=" + Overscan + " lead=" + Lead);
+            }
+            catch (Exception e) { Dbg.Line("[proj] failed: " + e.Message); }
         }
 
         [Il2CppInterop.Runtime.Attributes.HideFromIl2Cpp]

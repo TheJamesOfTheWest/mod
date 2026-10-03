@@ -17,6 +17,8 @@ namespace SotfPassthrough
         public bool Connected => _connected;
         /// <summary>True once after each (re)connect: the game side should resend its ground.</summary>
         public volatile bool JustConnected;
+        readonly SemaphoreSlim _wake = new SemaphoreSlim(0, 1); // wakes the send loop the moment something is queued (a 2 ms poll added up to 16 ms to every camera message)
+        void Wake() { try { _wake.Release(); } catch (SemaphoreFullException) { } }
 
         public WsClient(string url)
         {
@@ -26,13 +28,13 @@ namespace SotfPassthrough
 
         public void Send(string json)
         {
-            if (_connected && _out.Count < 256) _out.Enqueue((Encoding.UTF8.GetBytes(json), true));
+            if (_connected && _out.Count < 256) { _out.Enqueue((Encoding.UTF8.GetBytes(json), true)); Wake(); }
             else if (_connected) Dbg.Line("[ws] send queue full, dropped: " + (json.Length > 60 ? json.Substring(0, 60) : json));
         }
 
         public void SendBinary(byte[] data)
         {
-            if (_connected && _out.Count < 256) _out.Enqueue((data, false));
+            if (_connected && _out.Count < 256) { _out.Enqueue((data, false)); Wake(); }
         }
 
         public bool TryReceive(out string msg) => _in.TryDequeue(out msg);
@@ -67,7 +69,7 @@ namespace SotfPassthrough
                     {
                         if (_out.TryDequeue(out var m))
                             await ws.SendAsync(new ArraySegment<byte>(m.data), m.text ? WebSocketMessageType.Text : WebSocketMessageType.Binary, true, CancellationToken.None);
-                        else await Task.Delay(2);
+                        else await _wake.WaitAsync(20);
                     }
                 }
                 catch (Exception) { /* Minecraft not up yet, or it closed: retry */ }
