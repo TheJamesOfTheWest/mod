@@ -31,6 +31,10 @@ namespace SotfPassthrough
         Vector3 _camOffset;           // camera minus body root, measured when walking starts
         Vector3 _mcFeet; float _mcEye = 1.62f; bool _haveMcPos;
         float _nextGuard, _nextHide; float _lastSurface = float.NaN;
+        // ground heights (MC y at each column centre) and the 8x8 regions whose triangles must be (re)sent
+        readonly Dictionary<long, float> _heights = new Dictionary<long, float>();
+        readonly HashSet<long> _dirty = new HashSet<long>();
+        readonly Dictionary<long, float> _sentAt = new Dictionary<long, float>();
         bool _mcScreen;               // a Minecraft screen (inventory) is open: the virtual cursor drives it
         float _cx, _cy;               // virtual cursor, in Minecraft-window pixels
         float _lastCx = -1, _lastCy = -1;
@@ -52,7 +56,7 @@ namespace SotfPassthrough
                 Plugin.Instance.Log.LogInfo("status: camera=" + (cam == null ? "none" : cam.name + " pos=" + cam.transform.position) + " ws=" + _ws.Connected + " offset=" + (_haveOffset ? _yOffset.ToString("0.00") : "unset") + " groundColumnsSent=" + _sampled.Count);
             }
             if (cam == null || !_ws.Connected) { _shm.Write(false, 0.3f, 1000f, 60f, 0, 0, 0, 0, 0, 0); return; }
-            if (_ws.JustConnected) { _ws.JustConnected = false; _sampled.Clear(); _retryAt.Clear(); _haveOffset = false; _ws.Send("{\"t\":\"clear\"}"); _ws.Send("{\"t\":\"view\",\"w\":" + Screen.width + ",\"h\":" + Screen.height + "}"); _ws.Send("{\"t\":\"blocksync\",\"r\":48}"); Hooks.ClearBlocks(); }
+            if (_ws.JustConnected) { _ws.JustConnected = false; _sampled.Clear(); _retryAt.Clear(); _heights.Clear(); _dirty.Clear(); _sentAt.Clear(); _haveOffset = false; _ws.Send("{\"t\":\"clear\"}"); _ws.Send("{\"t\":\"view\",\"w\":" + Screen.width + ",\"h\":" + Screen.height + "}"); _ws.Send("{\"t\":\"blocksync\",\"r\":48}"); Hooks.ClearBlocks(); }
             while (_ws.TryReceive(out string incoming)) HandleMessage(incoming);
 
             var t = cam.transform;
@@ -201,9 +205,9 @@ namespace SotfPassthrough
             if (Time.unscaledTime < _nextGuard) return;
             _nextGuard = Time.unscaledTime + 0.1f;
             float mcFeetY = _mcFeet.y + _yOffset;
-            if (Ground(_mcFeet + Vector3.up * 1.5f, out float g)) _lastSurface = (float)Math.Floor(g + _yOffset + 0.5f);
+            if (Ground(_mcFeet + Vector3.up * 1.5f, out float g)) _lastSurface = g + _yOffset;
             if (float.IsNaN(_lastSurface)) return;
-            if (mcFeetY < _lastSurface - 0.02f)
+            if (mcFeetY < _lastSurface - 0.6f)
                 _ws.Send("{\"t\":\"setpos\",\"p\":[" + (-_mcFeet.x).ToString("R", C) + "," + (_lastSurface + 0.01f).ToString("R", C) + "," + _mcFeet.z.ToString("R", C) + "]}");
         }
 
@@ -263,11 +267,57 @@ namespace SotfPassthrough
                 if (!Ground(new Vector3(-(mx + 0.5f), feet.y + 1.5f, mz + 0.5f), out float g)) { _retryAt[key] = Time.unscaledTime + 3f; continue; }
                 _retryAt.Remove(key);
                 _sampled.Add(key);
-                int top = (int)Math.Floor(g + _yOffset + 0.5f) - 1;
+                int top = (int)Math.Floor(g + _yOffset) - 1; // the invisible ground blocks stay at or below the terrain: the player walks on the triangles above them
+                _heights[HKey(mx, mz)] = g + _yOffset;
+                for (int qx = mx - 1; qx <= mx; qx++) for (int qz = mz - 1; qz <= mz; qz++) _dirty.Add(HKey(FloorDiv(qx, 8), FloorDiv(qz, 8)));
                 if (sb.Length > 0) sb.Append(',');
                 sb.Append(mx).Append(',').Append(mz).Append(',').Append(top - GroundDepth + 1).Append(',').Append(top);
             }
             if (sb.Length > 0) _ws.Send("{\"t\":\"ground\",\"c\":[" + sb + "]}");
+            SendTriangles();
+        }
+
+        static int FloorDiv(int a, int b) => (int)Math.Floor(a / (double)b);
+
+        static long HKey(int x, int z) => ((long)x << 32) | (uint)z;
+
+        /// <summary>Triangulates the ground between neighbouring column centres, one 8x8 region at a time, and sends it as a binary frame.</summary>
+        void SendTriangles()
+        {
+            if (_dirty.Count == 0) return;
+            int sent = 0;
+            var done = new List<long>();
+            foreach (var rk in _dirty)
+            {
+                if (sent >= 4) break;
+                if (_sentAt.TryGetValue(rk, out float last) && Time.unscaledTime - last < 0.5f) continue;
+                int rx = (int)(rk >> 32), rz = (int)(rk & 0xFFFFFFFF);
+                var ms = new System.IO.MemoryStream();
+                var w = new System.IO.BinaryWriter(ms);
+                w.Write(rx); w.Write(rz); w.Write(0);
+                int count = 0;
+                for (int qx = rx * 8; qx < rx * 8 + 8; qx++)
+                    for (int qz = rz * 8; qz < rz * 8 + 8; qz++)
+                    {
+                        if (!_heights.TryGetValue(HKey(qx, qz), out float h00) || !_heights.TryGetValue(HKey(qx + 1, qz), out float h10)
+                            || !_heights.TryGetValue(HKey(qx, qz + 1), out float h01) || !_heights.TryGetValue(HKey(qx + 1, qz + 1), out float h11)) continue;
+                        float x0 = qx + 0.5f, x1 = qx + 1.5f, z0 = qz + 0.5f, z1 = qz + 1.5f;
+                        WriteTri(w, x0, h00, z0, x0, h01, z1, x1, h10, z0); WriteTri(w, x1, h10, z0, x0, h01, z1, x1, h11, z1);
+                        count += 2;
+                    }
+                var bytes = ms.ToArray();
+                BitConverter.GetBytes(count).CopyTo(bytes, 8);
+                _ws.SendBinary(bytes);
+                _sentAt[rk] = Time.unscaledTime;
+                done.Add(rk); sent++;
+            }
+            foreach (var rk in done) _dirty.Remove(rk);
+        }
+
+        static void WriteTri(System.IO.BinaryWriter w, float ax, float ay, float az, float bx, float by, float bz, float cx, float cy, float cz)
+        {
+            w.Write(ax); w.Write(ay); w.Write(az); w.Write(bx); w.Write(by); w.Write(bz); w.Write(cx); w.Write(cy); w.Write(cz);
+            w.Write(8); // TRI_TERRAIN
         }
     }
 }

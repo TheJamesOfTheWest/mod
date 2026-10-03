@@ -8,6 +8,7 @@ import dev.rehan.passthrough.Nether;
 import dev.rehan.passthrough.Passthrough;
 import dev.rehan.passthrough.WorldBridge;
 import java.net.InetSocketAddress;
+import java.nio.ByteBuffer;
 import java.util.Locale;
 import net.minecraft.client.Minecraft;
 import org.java_websocket.WebSocket;
@@ -68,7 +69,10 @@ public final class HostLink extends WebSocketServer {
 			switch (m.get("t").getAsString()) {
 				case "cam" -> HostState.update(m);
 				case "ground" -> WorldBridge.solid(ints(m.getAsJsonArray("c")));
-				case "clear" -> WorldBridge.clearSolid();
+				case "clear" -> {
+					WorldBridge.clearSolid();
+					dev.rehan.passthrough.sky.HostTris.clear();
+				}
 				case "cmd" -> WorldBridge.command(m.get("c").getAsString());
 				case "gta", "gtastate", "gtainfo", "director" -> this.relay(conn, message);
 				case "blocksync" -> WorldBridge.sync(m.has("r") ? m.get("r").getAsInt() : 48);
@@ -121,6 +125,16 @@ public final class HostLink extends WebSocketServer {
 			}
 		} catch (RuntimeException e) {
 			Passthrough.LOG.warn("bad host message {}: {}", message.length() > 200 ? message.substring(0, 200) : message, e.toString());
+		}
+	}
+
+	/** Binary frames: the host's ground triangles (see HostTris). */
+	@Override
+	public void onMessage(final WebSocket conn, final ByteBuffer message) {
+		try {
+			dev.rehan.passthrough.sky.HostTris.ingest(message);
+		} catch (RuntimeException e) {
+			Passthrough.LOG.warn("bad host triangle frame: {}", e.toString());
 		}
 	}
 

@@ -11,7 +11,7 @@ namespace SotfPassthrough
     public sealed class WsClient
     {
         readonly Uri _uri;
-        readonly ConcurrentQueue<string> _out = new ConcurrentQueue<string>();
+        readonly ConcurrentQueue<(byte[] data, bool text)> _out = new ConcurrentQueue<(byte[], bool)>();
         readonly ConcurrentQueue<string> _in = new ConcurrentQueue<string>();
         volatile bool _connected;
         public bool Connected => _connected;
@@ -26,7 +26,12 @@ namespace SotfPassthrough
 
         public void Send(string json)
         {
-            if (_connected && _out.Count < 256) _out.Enqueue(json);
+            if (_connected && _out.Count < 256) _out.Enqueue((Encoding.UTF8.GetBytes(json), true));
+        }
+
+        public void SendBinary(byte[] data)
+        {
+            if (_connected && _out.Count < 256) _out.Enqueue((data, false));
         }
 
         public bool TryReceive(out string msg) => _in.TryDequeue(out msg);
@@ -59,7 +64,7 @@ namespace SotfPassthrough
                     while (ws.State == WebSocketState.Open && !recv.IsCompleted)
                     {
                         if (_out.TryDequeue(out var m))
-                            await ws.SendAsync(new ArraySegment<byte>(Encoding.UTF8.GetBytes(m)), WebSocketMessageType.Text, true, CancellationToken.None);
+                            await ws.SendAsync(new ArraySegment<byte>(m.data), m.text ? WebSocketMessageType.Text : WebSocketMessageType.Binary, true, CancellationToken.None);
                         else await Task.Delay(2);
                     }
                 }
