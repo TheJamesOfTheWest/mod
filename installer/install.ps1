@@ -3,9 +3,16 @@
 # builds the plugin against your game, and copies the Minecraft mod. Safe to run again after every update.
 $ErrorActionPreference = 'Stop'
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
+# Works both from the flat installer zip and from inside the repo (installer\ next to dist\ and sotf\).
+if (Test-Path (Join-Path $dist 'sotf-addon.zip')) { $dist = $here; $src = Join-Path $here 'sotf' }
+else { $dist = Join-Path $here '..\dist'; $src = Join-Path $here '..\sotf' }
 function Step($t) { Write-Host ""; Write-Host "== $t" -ForegroundColor Cyan }
 function Ok($t) { Write-Host "   OK  $t" -ForegroundColor Green }
 function Warn($t) { Write-Host "   !!  $t" -ForegroundColor Yellow }
+
+foreach ($n in @('SonsOfTheForest', 'javaw')) {
+  if (Get-Process $n -ErrorAction SilentlyContinue) { Write-Host "Please close Sons of the Forest and Minecraft first ($n is running), then press Enter." -ForegroundColor Yellow; Read-Host }
+}
 
 Step "1/6  Finding Sons of the Forest"
 $candidates = @("C:\Program Files (x86)\Steam\steamapps\common\Sons Of The Forest")
@@ -57,7 +64,7 @@ if (-not (Test-Path (Join-Path $game 'ReShade.ini'))) {
 Ok "ReShade found"
 
 Step "4/6  Add-on and effect"
-Expand-Archive -Path (Join-Path $here 'sotf-addon.zip') -DestinationPath $game -Force
+Expand-Archive -Path (Join-Path $dist 'sotf-addon.zip') -DestinationPath $game -Force
 Ok "SotfPassthrough.addon64, MCPassthrough.fx and helper files copied"
 
 Step "5/6  Building the plugin for your game"
@@ -72,7 +79,7 @@ if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
   }
 }
 $log = Join-Path $here 'build-log.txt'
-& dotnet build (Join-Path $here 'sotf\SotfPassthrough.csproj') -c Release "-p:GameDir=$game" *> $log
+& dotnet build (Join-Path $src 'SotfPassthrough.csproj') -c Release "-p:GameDir=$game" *> $log
 if ($LASTEXITCODE -ne 0) {
   Warn "The plugin did not build. Send the file build-log.txt (in this folder) to Claude."
   Read-Host "Press Enter to close"
@@ -81,7 +88,7 @@ if ($LASTEXITCODE -ne 0) {
 Ok "plugin built and copied into BepInEx\plugins"
 
 Step "6/6  Minecraft mod"
-$jar = Join-Path $here 'passthrough-0.1.0.jar'
+$jar = Join-Path $dist 'passthrough-0.1.0.jar'
 # Your Minecraft profile: Modrinth's "SOTF Passthrough".
 $mods = Join-Path $env:APPDATA 'ModrinthApp\profiles\SOTF Passthrough\mods'
 if (-not (Test-Path $mods)) {
