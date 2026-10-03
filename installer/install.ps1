@@ -4,7 +4,7 @@
 $ErrorActionPreference = 'Stop'
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 # Works both from the flat installer zip and from inside the repo (installer\ next to dist\ and sotf\).
-if (Test-Path (Join-Path $dist 'sotf-addon.zip')) { $dist = $here; $src = Join-Path $here 'sotf' }
+if (Test-Path (Join-Path $here 'sotf-addon.zip')) { $dist = $here; $src = Join-Path $here 'sotf' }
 else { $dist = Join-Path $here '..\dist'; $src = Join-Path $here '..\sotf' }
 function Step($t) { Write-Host ""; Write-Host "== $t" -ForegroundColor Cyan }
 function Ok($t) { Write-Host "   OK  $t" -ForegroundColor Green }
