@@ -27,6 +27,7 @@ namespace SotfPassthrough
         public void Send(string json)
         {
             if (_connected && _out.Count < 256) _out.Enqueue((Encoding.UTF8.GetBytes(json), true));
+            else if (_connected) Dbg.Line("[ws] send queue full, dropped: " + (json.Length > 60 ? json.Substring(0, 60) : json));
         }
 
         public void SendBinary(byte[] data)
@@ -46,6 +47,7 @@ namespace SotfPassthrough
                     using var ws = new ClientWebSocket();
                     await ws.ConnectAsync(_uri, CancellationToken.None);
                     _connected = true; JustConnected = true;
+                    Dbg.Line("[ws] connected to Minecraft");
                     var recv = Task.Run(async () =>
                     {
                         while (ws.State == WebSocketState.Open)
@@ -69,6 +71,7 @@ namespace SotfPassthrough
                     }
                 }
                 catch (Exception) { /* Minecraft not up yet, or it closed: retry */ }
+                if (_connected) Dbg.Line("[ws] connection lost");
                 _connected = false;
                 while (_out.TryDequeue(out _)) { }
                 await Task.Delay(1000);

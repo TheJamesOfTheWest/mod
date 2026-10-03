@@ -25,5 +25,13 @@ try {
     $sc = $sh.CreateShortcut($lnk); $sc.TargetPath = $bat; $sc.WorkingDirectory = $base; $sc.Save()
     Write-Host "Added a desktop shortcut: 'Update Minecraft x SotF'" -ForegroundColor Green
   }
+  $bat2 = Join-Path $base 'Collect-SotfLogs.bat'
+  Copy-Item (Join-Path $root.FullName 'installer\Collect-SotfLogs.bat') $bat2 -Force
+  $lnk2 = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Collect Minecraft x SotF logs.lnk'
+  if (-not (Test-Path $lnk2)) {
+    $sh = New-Object -ComObject WScript.Shell
+    $sc = $sh.CreateShortcut($lnk2); $sc.TargetPath = $bat2; $sc.WorkingDirectory = $base; $sc.Save()
+    Write-Host "Added a desktop shortcut: 'Collect Minecraft x SotF logs'" -ForegroundColor Green
+  }
 } catch { }
 & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root.FullName 'installer\install.ps1')

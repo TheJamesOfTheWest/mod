@@ -12,7 +12,7 @@ namespace SotfPassthrough
     /// </summary>
     public static class Hooks
     {
-        static void Log(string m) => Plugin.Instance.Log.LogInfo(m);
+        static void Log(string m) { Plugin.Instance.Log.LogInfo(m); Dbg.Line("[hook] " + m); }
 
         // ---- input ----
         static readonly string[] Blocked =

@@ -24,6 +24,8 @@ public final class HostState {
 	) {
 	}
 
+	/** Counts of host camera messages received, for the status line. */
+	public static volatile long camMessages;
 	private static final long TIMEOUT_NANOS = 2_000_000_000L;
 	private static volatile Pose latest;
 	/** The pose this frame renders with, taken once per frame so every hook agrees. Render thread only. */
@@ -34,6 +36,7 @@ public final class HostState {
 
 	/** {"t":"cam","f":frame,"p":[x,y,z],"r":[yaw,pitch,roll],"fov":deg,"fp":bool,"pl":[x,y,z],"h":bodyYaw} */
 	static void update(final JsonObject m) {
+		camMessages++;
 		JsonArray p = m.getAsJsonArray("p");
 		JsonArray r = m.getAsJsonArray("r");
 		JsonArray pl = m.has("pl") ? m.getAsJsonArray("pl") : p;

@@ -13,6 +13,7 @@ namespace SotfPassthrough
         public override void Load()
         {
             Instance = this;
+            Dbg.Init(BepInEx.Paths.BepInExRootPath);
             ClassInjector.RegisterTypeInIl2Cpp<PassthroughBehaviour>();
             var go = new GameObject("MCPassthrough");
             Object.DontDestroyOnLoad(go);

@@ -109,6 +109,7 @@ public final class HostLink extends WebSocketServer {
 				case "walk" -> {
 					boolean on = !m.has("on") || m.get("on").getAsBoolean();
 					Passthrough.walk = on;
+					PlayerSync.resetSafe();
 					Minecraft minecraft = Minecraft.getInstance();
 					minecraft.execute(() -> {
 						if (minecraft.player != null) {

@@ -109,6 +109,14 @@ public final class FrameExporter {
 		far = depthFar;
 	}
 
+	/** Exported frames so far (for the status line). */
+	public static long published() {
+		return publishCounter;
+	}
+
+	public static int lastWidth;
+	public static int lastHeight;
+
 	public static boolean exporting() {
 		return shm != null;
 	}
@@ -153,6 +161,8 @@ public final class FrameExporter {
 
 		int w = target.width;
 		int h = target.height;
+		lastWidth = w;
+		lastHeight = h;
 		if ((long)w * h * 4 > LAYER_MAX) {
 			if (!warnedSize) {
 				warnedSize = true;

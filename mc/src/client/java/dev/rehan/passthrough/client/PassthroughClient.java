@@ -72,6 +72,9 @@ public class PassthroughClient implements ClientModInitializer {
 	/** Server ticks until the setup commands run (the player isn't in the player list yet when JOIN fires). */
 	private static int setupIn = -1;
 	private static int respawnIn;
+	private static int statusIn;
+	private static int restoreIn;
+	private static long lastCamMessages, lastPublished;
 	/** Whether a screen (inventory) was open at the last tick, so the host can free its mouse. */
 	private static boolean screenOpen;
 
@@ -110,12 +113,31 @@ public class PassthroughClient implements ClientModInitializer {
 		if (minecraft.player != null && minecraft.gui.screen() instanceof DeathScreen && --respawnIn <= 0) {
 			respawnIn = 40;
 			minecraft.player.respawn();
+			restoreIn = 6;
 		}
 
 		boolean open = minecraft.player != null && minecraft.gui.screen() != null && !(minecraft.gui.screen() instanceof DeathScreen);
 		if (open != screenOpen) {
 			screenOpen = open;
 			Passthrough.events.accept("{\"t\":\"screen\",\"open\":" + open + "}");
+		}
+
+		if (restoreIn > 0 && --restoreIn == 0 && Passthrough.walk) {
+			PlayerSync.restoreSafe(minecraft.player);
+		}
+
+		if (--statusIn <= 0) {
+			statusIn = 20;
+			HostState.Pose pose = HostState.live();
+			long cams = HostState.camMessages, pub = FrameExporter.published();
+			if (pose != null || cams != lastCamMessages) {
+				Passthrough.LOG.info("status: host={} cam/s={} exports/s={} frame={}x{} fov={} screen={} walk={} tris={}", pose != null, cams - lastCamMessages, pub - lastPublished,
+					FrameExporter.lastWidth, FrameExporter.lastHeight, pose == null ? "-" : String.format("%.1f", pose.fov()), minecraft.gui.screen() == null ? "none" : minecraft.gui.screen().getClass().getSimpleName(),
+					Passthrough.walk, dev.rehan.passthrough.sky.HostTris.triangleCount());
+			}
+
+			lastCamMessages = cams;
+			lastPublished = pub;
 		}
 
 		if (!configured) {

@@ -15,6 +15,22 @@ public final class PlayerSync {
 	private static float tickDistance;
 	private static double lastX = Double.NaN, lastZ;
 	private static long lastWalkLog;
+	private static double safeX, safeY, safeZ;
+	private static boolean haveSafe;
+
+	/** Forget the last standing position (walk mode just started or stopped). */
+	public static void resetSafe() {
+		haveSafe = false;
+	}
+
+	/** Put the player back on the last place he stood (after a fall into the void or a respawn at the world spawn). */
+	public static void restoreSafe(final LocalPlayer player) {
+		if (haveSafe && player != null) {
+			player.setPos(safeX, safeY + 0.05, safeZ);
+			player.setDeltaMovement(Vec3.ZERO);
+			Passthrough.LOG.info("walk: put the player back at ({}, {}, {})", safeX, safeY, safeZ);
+		}
+	}
 
 	private PlayerSync() {
 	}
@@ -42,6 +58,16 @@ public final class PlayerSync {
 			player.yBodyRot = player.yBodyRotO = p.yaw();
 			if (minecraft.options.getCameraType() != CameraType.FIRST_PERSON) {
 				minecraft.options.setCameraType(CameraType.FIRST_PERSON);
+			}
+
+			if (player.onGround() && player.getY() > -60.0) {
+				safeX = player.getX();
+				safeY = player.getY();
+				safeZ = player.getZ();
+				haveSafe = true;
+			} else if (haveSafe && player.getY() < safeY - 6.0) {
+				// fell through the ground: back to where he last stood, before the void kills him and he respawns at the world spawn
+				restoreSafe(player);
 			}
 
 			Vec3 at = player.getPosition(partialTick);

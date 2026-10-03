@@ -40,7 +40,7 @@ namespace SotfPassthrough
         bool _mcScreen;               // a Minecraft screen (inventory) is open: the virtual cursor drives it
         float _cx, _cy;               // virtual cursor, in Minecraft-window pixels
         float _lastCx = -1, _lastCy = -1;
-        float _nextLog;
+        float _nextLog, _nextSnap, _nextFlush; int _camSent, _triFrames;
         bool _wasGameplay;            // the first-person gameplay camera (MainCameraFP) is the active one
         float _yOffset; bool _haveOffset;
         readonly HashSet<long> _sampled = new HashSet<long>();
@@ -85,7 +85,7 @@ namespace SotfPassthrough
 
             if (!_haveOffset)
             {
-                if (Ground(feet + Vector3.up * 1.5f, out float g)) { _yOffset = (float)Math.Round(g) - g; _haveOffset = true; }
+                if (Ground(feet + Vector3.up * 1.5f, out float g)) { _yOffset = 100f - g; _haveOffset = true; Dbg.Line("[offset] ground y=" + g + " -> Minecraft y=100, yOffset=" + _yOffset); } // keeps the world inside Minecraft's height range (-64..320) wherever the player stands
                 else return;
             }
 
@@ -109,12 +109,31 @@ namespace SotfPassthrough
             catch (Exception) { }
             _shm.Write(true, cam.nearClipPlane, cam.farClipPlane, cam.fieldOfView, yaw, pitch, 0f, -pos.x, pos.y + _yOffset, pos.z, dsx, dsy);
 
+            if (Time.unscaledTime > _nextSnap)
+            {
+                _nextSnap = Time.unscaledTime + 0.25f;
+                Hooks.TryGetBody(out var snapBody);
+                Dbg.Line("snap cam=" + cam.name + " pos=" + pos + " yaw=" + yaw.ToString("0.0") + " pitch=" + pitch.ToString("0.0") + " fov=" + cam.fieldOfView.ToString("0.0") + " near=" + cam.nearClipPlane + " far=" + cam.farClipPlane
+                    + " px=" + cam.pixelWidth + "x" + cam.pixelHeight + " scaled=" + cam.scaledPixelWidth + "x" + cam.scaledPixelHeight + " screen=" + Screen.width + "x" + Screen.height
+                    + " | mc=" + _mcMode + " walk=" + _walk + " scr=" + _mcScreen + " | body=" + snapBody + " mcFeet=" + (_haveMcPos ? _mcFeet.ToString() : "-") + " surf=" + _lastSurface + " yOff=" + (_haveOffset ? _yOffset.ToString("0.00") : "-")
+                    + " | cols=" + _sampled.Count + " heights=" + _heights.Count + " dirty=" + _dirty.Count + " dt=" + (Time.unscaledDeltaTime * 1000f).ToString("0.0") + "ms");
+            }
+            if (Time.unscaledTime > _nextFlush) { _nextFlush = Time.unscaledTime + 1f; Dbg.Flush(); }
+
             SampleGround(feet);
             if (_walk && _haveMcPos)
             {
                 GuardGround();
                 var bodyTarget = _mcFeet + Vector3.up * _mcEye - _camOffset;
-                Hooks.MoveBody(bodyTarget);
+                // Never yank the game's body far in one frame (a Minecraft respawn or fall would throw it across the island): resync Minecraft to the body instead
+                if (Hooks.TryGetBody(out var curBody) && (bodyTarget - curBody).magnitude > 12f)
+                {
+                    var feetNow = curBody + _camOffset - Vector3.up * _mcEye;
+                    Plugin.Instance.Log.LogInfo("walk: rejected a " + (bodyTarget - curBody).magnitude.ToString("0.0") + " m jump; putting Minecraft back at the body");
+                    _ws.Send("{\"t\":\"setpos\",\"p\":[" + (-feetNow.x).ToString("R", C) + "," + (feetNow.y + _yOffset).ToString("R", C) + "," + feetNow.z.ToString("R", C) + "]}");
+                    _haveMcPos = false;
+                }
+                else Hooks.MoveBody(bodyTarget);
                 if (Time.unscaledTime > _nextWalkLog)
                 {
                     _nextWalkLog = Time.unscaledTime + 1f;
@@ -136,7 +155,7 @@ namespace SotfPassthrough
         void PollInput()
         {
             if (!RawInput.GameFocused()) return;
-            Edge(0x76, d => { if (d) { _mcMode = !_mcMode; Plugin.Instance.Log.LogInfo("Minecraft mode " + (_mcMode ? "ON" : "OFF")); Hooks.SetInputBlocked(_mcMode); if (!_mcMode) Hooks.HideBody(false); _nextReassert = Time.unscaledTime + 2f; if (!_mcMode) ReleaseKeys(); } }); // F7
+            Edge(0x76, d => { if (d) { _mcMode = !_mcMode; Plugin.Instance.Log.LogInfo("Minecraft mode " + (_mcMode ? "ON" : "OFF")); Dbg.Line("[key] F7 minecraft mode " + (_mcMode ? "ON" : "OFF")); Hooks.SetInputBlocked(_mcMode); if (!_mcMode) Hooks.HideBody(false); _nextReassert = Time.unscaledTime + 2f; if (!_mcMode) ReleaseKeys(); } }); // F7
             Edge(0x77, d => { if (d) { try { TypeDump.Run(BepInEx.Paths.BepInExRootPath); Plugin.Instance.Log.LogInfo("Wrote sotf-types.txt and sotf-members.txt to " + BepInEx.Paths.BepInExRootPath); } catch (Exception e) { Plugin.Instance.Log.LogError(e.ToString()); } } }); // F8
             Edge(0x78, d => { if (d) { try { TypeDump.RunRequest(BepInEx.Paths.BepInExRootPath); Plugin.Instance.Log.LogInfo("Wrote sotf-request.txt"); } catch (Exception e) { Plugin.Instance.Log.LogError(e.ToString()); } } }); // F9
             Edge(0x79, d => { if (d) { var c = Camera.main; Hooks.SpawnExplosion(c.transform.position + c.transform.forward * 8f); } }); // F10: test explosion 8 m ahead
@@ -194,6 +213,7 @@ namespace SotfPassthrough
                 using var doc = JsonDocument.Parse(msg);
                 var root = doc.RootElement;
                 if (!root.TryGetProperty("t", out var t)) return;
+                if (t.GetString() != "mcpos") Dbg.Line("[in] " + (msg.Length > 160 ? msg.Substring(0, 160) + "..." : msg));
                 switch (t.GetString())
                 {
                     case "explosion":
@@ -250,7 +270,7 @@ namespace SotfPassthrough
             float mcFeetY = _mcFeet.y + _yOffset;
             if (Ground(_mcFeet + Vector3.up * 1.5f, out float g)) _lastSurface = g + _yOffset;
             if (float.IsNaN(_lastSurface)) return;
-            if (mcFeetY < _lastSurface - 0.6f)
+            if (mcFeetY < _lastSurface - 1.5f)
             {
                 _setposSent++;
                 if (_setposSent <= 20 || _setposSent % 20 == 0) Plugin.Instance.Log.LogInfo("guard: lifting Steve from " + mcFeetY + " to surface " + _lastSurface + " (#" + _setposSent + ")");
@@ -328,7 +348,7 @@ namespace SotfPassthrough
                 _ws.Send("{\"t\":\"walk\",\"on\":false}");
                 foreach (var k in new[] { "forward", "back", "left", "right", "jump", "sneak", "sprint" }) Key(k, false);
             }
-            Plugin.Instance.Log.LogInfo("Steve drives: " + (_walk ? "ON" : "OFF"));
+            Plugin.Instance.Log.LogInfo("Steve drives: " + (_walk ? "ON" : "OFF")); Dbg.Line("[key] F6 walk " + (_walk ? "ON" : "OFF"));
         }
 
         void Key(string k, bool down) { _ws.Send("{\"t\":\"key\",\"k\":\"" + k + "\",\"down\":" + (down ? "true" : "false") + "}"); }
