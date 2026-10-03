@@ -53,6 +53,10 @@ namespace SotfPassthrough
         // columns whose raycast found nothing (water, holes, not streamed in): retry later so they don't starve the nearer-first probe budget
         readonly Dictionary<long, float> _retryAt = new Dictionary<long, float>();
         List<(int dx, int dz)> _spiral;
+        readonly float[] _probes = new float[36];   // depth probes sent to the add-on: u, v (from the top-left), true camera-space depth, valid
+        static readonly float[] ProbeU = { 0.2f, 0.5f, 0.8f, 0.2f, 0.5f, 0.8f, 0.2f, 0.5f, 0.8f };
+        static readonly float[] ProbeV = { 0.3f, 0.3f, 0.3f, 0.5f, 0.5f, 0.5f, 0.7f, 0.7f, 0.7f };
+        float _nextProbeLog;
         bool _pOk; float _pT, _pYaw, _pPitch, _wYaw, _wPitch; Vector3 _pPos, _vPos; // pose prediction state (angular and linear velocity, smoothed)
 
         void Awake() { _ws = new WsClient("ws://127.0.0.1:25599"); _shm = new HostShm(); }
@@ -143,7 +147,8 @@ namespace SotfPassthrough
                 if (sx > 0.2f && sx < 0.99f && sy > 0.2f && sy < 0.99f) { dsx = sx; dsy = sy; }
             }
             catch (Exception) { }
-            _shm.Write(true, cam.nearClipPlane, cam.farClipPlane, cam.fieldOfView, yaw, pitch, 0f, -pos.x, pos.y + _yOffset, pos.z, dsx, dsy);
+            CastProbes(cam);
+            _shm.Write(true, cam.nearClipPlane, cam.farClipPlane, cam.fieldOfView, yaw, pitch, 0f, -pos.x, pos.y + _yOffset, pos.z, dsx, dsy, _probes);
 
             if (Time.unscaledTime > _nextSnap)
             {
@@ -180,6 +185,44 @@ namespace SotfPassthrough
             }
             if (_mcMode && Time.unscaledTime > _nextHide) { _nextHide = Time.unscaledTime + 2f; Hooks.HideBody(true); }
             PollInput();
+        }
+
+        /// <summary>
+        /// Ground truth for the depth buffer: nine rays through the screen, and where each really hits (camera-space depth, the
+        /// same quantity the depth buffer holds). The effect compares them with what it reads and corrects its depth scale and
+        /// the upscaler's render-scale itself.
+        /// </summary>
+        void CastProbes(Camera cam)
+        {
+            Transform self = null;
+            try { self = TheForest.Utils.LocalPlayer.GameObject.transform; } catch (Exception) { }
+            var camPos = cam.transform.position; var camFwd = cam.transform.forward;
+            int valid = 0; var line = new StringBuilder();
+            for (int i = 0; i < 9; i++)
+            {
+                int o = i * 4;
+                _probes[o] = _probes[o + 1] = _probes[o + 2] = _probes[o + 3] = 0f;
+                try
+                {
+                    var ray = cam.ViewportPointToRay(new Vector3(ProbeU[i], ProbeV[i], 0f));
+                    var hits = Physics.RaycastAll(ray.origin, ray.direction, 150f, ~(1 << 2), QueryTriggerInteraction.Ignore);
+                    float best = float.MaxValue; Vector3 bp = Vector3.zero;
+                    for (int k = 0; k < hits.Length; k++)
+                    {
+                        var h = hits[k];
+                        if (h.collider == null || h.collider.gameObject.name == "MCBlock") continue;
+                        if (self != null && h.collider.transform.IsChildOf(self)) continue;
+                        if (h.distance < best) { best = h.distance; bp = h.point; }
+                    }
+                    if (best == float.MaxValue) continue;
+                    float z = Vector3.Dot(bp - camPos, camFwd);
+                    if (z < 0.5f) continue;
+                    _probes[o] = ProbeU[i]; _probes[o + 1] = 1f - ProbeV[i]; _probes[o + 2] = z; _probes[o + 3] = 1f;
+                    valid++; line.Append(z.ToString("0.0")).Append(' ');
+                }
+                catch (Exception) { }
+            }
+            if (Time.unscaledTime > _nextProbeLog) { _nextProbeLog = Time.unscaledTime + 2f; Dbg.Line("[probe] hits=" + valid + "/9 depth(m)=" + line); }
         }
 
         /// <summary>Does the projection we assume (vertical FOV, backbuffer aspect) match what Unity really renders with? One line per status interval.</summary>

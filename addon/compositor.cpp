@@ -113,12 +113,14 @@ namespace
 	// ---- Sons of the Forest host state, written by the BepInEx plugin into "Local\SotfHostState" ----
 	// 0 u32 magic "SFHS"  4 u32 version(1)  8 i64 seq (odd while writing)  16 i32 active  20 f32 near  24 f32 far  28 f32 vertical fov
 	// 32 f32 yaw  36 f32 pitch  40 f32 roll (Minecraft convention, degrees)  48 f64 x  56 f64 y  64 f64 z (Minecraft coordinates)
+	// 72 f32 depth render scale x  76 f32 y (0 = unknown)  96: version 2 only, nine depth probes of f32 (u, v from the top-left, true camera-space depth, valid)
 	constexpr const wchar_t *kHostName = L"Local\\SotfHostState";
 	constexpr uint32_t kHostMagic = 0x53484653;
 	HANDLE g_hostMap = nullptr;
 	const uint8_t *g_hostView = nullptr;
 	DWORD g_nextHostAttempt = 0;
 	int64_t g_lastHostSeq = -1;
+	float g_probe[36] = {};
 
 	void poll_host()
 	{
@@ -136,7 +138,7 @@ namespace
 				g_active = false;
 				return;
 			}
-			g_hostView = static_cast<const uint8_t *>(MapViewOfFile(g_hostMap, FILE_MAP_READ, 0, 0, 128));
+			g_hostView = static_cast<const uint8_t *>(MapViewOfFile(g_hostMap, FILE_MAP_READ, 0, 0, 0));
 			if (g_hostView == nullptr || read<uint32_t>(g_hostView) != kHostMagic)
 			{
 				if (g_hostView != nullptr)
@@ -160,10 +162,16 @@ namespace
 		const float yaw = read<float>(g_hostView + 32), pitch = read<float>(g_hostView + 36), roll = read<float>(g_hostView + 40);
 		const double x = read<double>(g_hostView + 48), y = read<double>(g_hostView + 56), z = read<double>(g_hostView + 64);
 		const float depthScaleX = read<float>(g_hostView + 72), depthScaleY = read<float>(g_hostView + 76);
+		float probe[36] = {};
+		const bool hasProbes = read<uint32_t>(g_hostView + 4) >= 2;
+		if (hasProbes)
+			for (int i = 0; i < 36; ++i)
+				probe[i] = read<float>(g_hostView + 96 + 4 * i);
 		std::atomic_thread_fence(std::memory_order_acquire);
 		if (*seqp != seq)
 			return;
 		g_active = active != 0;
+		std::memcpy(g_probe, probe, sizeof(probe));
 		g_depthScaleX = depthScaleX;
 		g_depthScaleY = depthScaleY;
 		if (seq != g_lastHostSeq)
@@ -401,6 +409,13 @@ namespace
 			runtime->set_uniform_value_float(v, g_depthScaleX.load(), g_depthScaleY.load());
 		if (const effect_uniform_variable v = runtime->find_uniform_variable(kEffect, "HostPlanes"); v.handle != 0)
 			runtime->set_uniform_value_float(v, g_hostNear.load(), g_hostFar.load());
+		for (int i = 0; i < 9; ++i)
+		{
+			char name[16];
+			snprintf(name, sizeof(name), "CalibProbe%d", i);
+			if (const effect_uniform_variable v = runtime->find_uniform_variable(kEffect, name); v.handle != 0)
+				runtime->set_uniform_value_float(v, g_probe[4 * i], g_probe[4 * i + 1], g_probe[4 * i + 2], g_probe[4 * i + 3]);
+		}
 
 		// Re-projection from Minecraft's pose to GTA's latest (extrapolated by the effect's PosePrediction frames).
 		Pose host, prev;

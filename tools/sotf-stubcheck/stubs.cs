@@ -61,12 +61,13 @@ namespace UnityEngine
     {
         public float x, y, z;
         public Vector3(float x, float y, float z) { this.x = x; this.y = y; this.z = z; }
-        public static Vector3 Lerp(Vector3 a, Vector3 b, float t) => a; public static Vector3 ClampMagnitude(Vector3 v, float m) => v;
+        public static float Dot(Vector3 a, Vector3 b) => 0f; public static Vector3 Lerp(Vector3 a, Vector3 b, float t) => a; public static Vector3 ClampMagnitude(Vector3 v, float m) => v;
         public static Vector3 up => default; public static Vector3 down => default; public static Vector3 forward => default; public static Vector3 zero => default; public static Vector3 one => default;
         public static Vector3 operator +(Vector3 a, Vector3 b) => a; public static Vector3 operator -(Vector3 a, Vector3 b) => a;
         public static Vector3 operator *(Vector3 a, float f) => a; public static Vector3 operator /(Vector3 a, float f) => a;
         public float magnitude => 0; public float sqrMagnitude => 0; public Vector3 normalized => this;
     }
+    public struct Ray { public Vector3 origin, direction; }
     public struct Quaternion { public static Quaternion identity => default; }
     public struct Matrix4x4 { public float m00, m11; }
     public struct Scene { public bool IsValid() => true; }
@@ -115,7 +116,7 @@ namespace UnityEngine
     }
     public class Camera : Behaviour
     {
-        public static Camera main => null;
+        public static Camera main => null; public Ray ViewportPointToRay(Vector3 v) => default;
         public float fieldOfView, nearClipPlane, farClipPlane, aspect; public bool usePhysicalProperties; public Matrix4x4 nonJitteredProjectionMatrix => default;
         public int pixelWidth, pixelHeight, scaledPixelWidth, scaledPixelHeight;
     }

@@ -1,0 +1,14 @@
+name: Check the ReShade effect
+on:
+  push:
+    paths: ["addon/shaders/**", "tools/fxcheck/**", ".github/workflows/shader-check.yml"]
+  workflow_dispatch:
+jobs:
+  fxcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y glslang-tools
+      - run: python3 tools/fxcheck/fxcheck.py
+      - name: dist copy matches
+        run: cmp addon/shaders/MCPassthrough.fx dist/MCPassthrough.fx

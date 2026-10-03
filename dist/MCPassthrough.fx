@@ -28,6 +28,20 @@ uniform float2 HostDepthRenderScale < ui_type = "drag"; ui_min = 0.2; ui_max = 1
 uniform float2 DepthScaleAuto = float2(0.0, 0.0);
 
 uniform bool HostReversedZ < ui_label = "GTA depth is reversed"; > = true;
+// The plugin raycasts nine rays through the screen every frame and sends where each lands: u, v (from the top-left), the true
+// camera-space depth in metres, and 1 when the ray hit something. The effect reads the depth buffer there and works out what
+// render scale and distance factor make the two agree (see PS_Calib).
+uniform float4 CalibProbe0 = float4(0.0, 0.0, 0.0, 0.0);
+uniform float4 CalibProbe1 = float4(0.0, 0.0, 0.0, 0.0);
+uniform float4 CalibProbe2 = float4(0.0, 0.0, 0.0, 0.0);
+uniform float4 CalibProbe3 = float4(0.0, 0.0, 0.0, 0.0);
+uniform float4 CalibProbe4 = float4(0.0, 0.0, 0.0, 0.0);
+uniform float4 CalibProbe5 = float4(0.0, 0.0, 0.0, 0.0);
+uniform float4 CalibProbe6 = float4(0.0, 0.0, 0.0, 0.0);
+uniform float4 CalibProbe7 = float4(0.0, 0.0, 0.0, 0.0);
+uniform float4 CalibProbe8 = float4(0.0, 0.0, 0.0, 0.0);
+uniform bool AutoDepth < ui_label = "Calibrate the game's depth automatically";
+	ui_tooltip = "Measures the real distances with the game's physics and corrects the depth buffer's scale and the upscaler's render scale by itself. When it cannot get a good fit it falls back to the sliders. See Debug view 'Depth calibration'."; > = true;
 uniform float DepthBias < ui_type = "drag"; ui_min = 0.0; ui_max = 1.0; ui_step = 0.005; ui_label = "Depth bias (m)";
 	ui_tooltip = "How far behind GTA's surface Minecraft may still show (blocks resting on the ground)."; > = 0.12;
 uniform float SlopeBias < ui_type = "drag"; ui_min = 0.0; ui_max = 40.0; ui_step = 0.1; ui_label = "Depth bias per grazing slope";
@@ -60,7 +74,7 @@ uniform float BloomThreshold < ui_type = "drag"; ui_min = 0.0; ui_max = 1.0; ui_
 uniform float3 Shake = float3(0.0, 0.0, 0.0);
 uniform float PortalWarp = 0.0;
 uniform float Timer < source = "timer"; >;
-uniform int DebugView < ui_type = "combo"; ui_items = "Composite\0GTA depth (1 m bands)\0Minecraft depth (1 m bands)\0Depth difference\0"; > = 0;
+uniform int DebugView < ui_type = "combo"; ui_items = "Composite\0GTA depth (1 m bands)\0Minecraft depth (1 m bands)\0Depth difference\0Depth calibration\0"; > = 0;
 uniform bool Reproject < ui_label = "Re-project to GTA's camera"; ui_tooltip = "Rotate Minecraft's (slightly older) frame onto GTA's current camera."; > = true;
 uniform float PosePrediction < ui_type = "drag"; ui_min = -2.0; ui_max = 3.0; ui_step = 0.05; ui_label = "Pose prediction (frames)";
 	ui_tooltip = "Extrapolate GTA's camera rotation by this many frames before re-projecting."; > = 0.0;
@@ -132,7 +146,7 @@ float mc_linear(float d)
 	return n * f / (n + d * (f - n));
 }
 
-float host_linear(float d)
+float host_linear_raw(float d)
 {
 	const float n = HostPlanes.x, f = HostPlanes.y;
 	float z;
@@ -140,13 +154,123 @@ float host_linear(float d)
 		z = d > 0.0 ? n * f / (n + d * (f - n)) : 1e9;
 	else
 		z = d < 1.0 ? n * f / (f - d * (f - n)) : 1e9;
-	return z * HostDepthScale;
+	return z;
+}
+
+float host_linear(float d)
+{
+	return host_linear_raw(d) * HostDepthScale;
 }
 
 float3 bands(float z)
 {
 	const float t = frac(z);
 	return lerp(float3(0.1, 0.1, 0.1), float3(1.0, 0.85, 0.3), step(0.5, t)) * saturate(1.5 - z / 100.0);
+}
+
+// ---- depth self-calibration ----
+// 29 candidate render scales (0.300 .. 1.000 in steps of 0.025), one texel each: its running mean of log(true depth / depth
+// buffer depth) over the probes, and how badly the probes disagree with that mean (lower = a better fit).
+// The wrong scale reads the depth of other pixels, so the probes disagree; the right one makes them agree on one factor.
+texture CalibTex { Width = 32; Height = 1; Format = RGBA32F; };
+sampler sCalib { Texture = CalibTex; MinFilter = POINT; MagFilter = POINT; MipFilter = POINT; AddressU = CLAMP; AddressV = CLAMP; };
+texture CalibPrevTex { Width = 32; Height = 1; Format = RGBA32F; };
+sampler sCalibPrev { Texture = CalibPrevTex; MinFilter = POINT; MagFilter = POINT; MipFilter = POINT; AddressU = CLAMP; AddressV = CLAMP; };
+// The winner: x = render scale, y = distance factor, z = its loss, w = 1 when it is good enough to trust.
+texture CalibSelTex { Width = 1; Height = 1; Format = RGBA32F; };
+sampler sCalibSel { Texture = CalibSelTex; MinFilter = POINT; MagFilter = POINT; MipFilter = POINT; AddressU = CLAMP; AddressV = CLAMP; };
+
+/// (log(true / buffer), 1) for one probe read at render scale s; (0, 0) when the probe is unusable.
+float2 calib_probe(float4 p, float s)
+{
+	if (p.w < 0.5 || p.z < 0.2)
+		return float2(0.0, 0.0);
+	const float z = host_linear_raw(tex2Dlod(ReShade::DepthBuffer, float4(p.xy * s, 0.0, 0.0)).x);
+	if (z > 1e8 || z < 0.001)
+		return float2(0.0, 0.0);
+	const float r = log(p.z / z);
+	return abs(r) > 1.2 ? float2(0.0, 0.0) : float2(r, 1.0);
+}
+
+/// x = the probes' agreed log factor, y = loss (mean of the probes' distance from it, each capped), z = probes used, w = 1 when enough.
+float4 calib_eval(float s)
+{
+	const float2 a0 = calib_probe(CalibProbe0, s);
+	const float2 a1 = calib_probe(CalibProbe1, s);
+	const float2 a2 = calib_probe(CalibProbe2, s);
+	const float2 a3 = calib_probe(CalibProbe3, s);
+	const float2 a4 = calib_probe(CalibProbe4, s);
+	const float2 a5 = calib_probe(CalibProbe5, s);
+	const float2 a6 = calib_probe(CalibProbe6, s);
+	const float2 a7 = calib_probe(CalibProbe7, s);
+	const float2 a8 = calib_probe(CalibProbe8, s);
+	const float n = a0.y + a1.y + a2.y + a3.y + a4.y + a5.y + a6.y + a7.y + a8.y;
+	if (n < 3.0)
+		return float4(0.0, 0.0, n, 0.0);
+	const float m = (a0.x + a1.x + a2.x + a3.x + a4.x + a5.x + a6.x + a7.x + a8.x) / n;
+	// the centre again without the probes far from the mean (a tree's leaves where the ray hit its trunk, water, grass)
+	const float w0 = a0.y * step(abs(a0.x - m), 0.15);
+	const float w1 = a1.y * step(abs(a1.x - m), 0.15);
+	const float w2 = a2.y * step(abs(a2.x - m), 0.15);
+	const float w3 = a3.y * step(abs(a3.x - m), 0.15);
+	const float w4 = a4.y * step(abs(a4.x - m), 0.15);
+	const float w5 = a5.y * step(abs(a5.x - m), 0.15);
+	const float w6 = a6.y * step(abs(a6.x - m), 0.15);
+	const float w7 = a7.y * step(abs(a7.x - m), 0.15);
+	const float w8 = a8.y * step(abs(a8.x - m), 0.15);
+	const float wn = w0 + w1 + w2 + w3 + w4 + w5 + w6 + w7 + w8;
+	const float c = wn > 0.5 ? (w0 * a0.x + w1 * a1.x + w2 * a2.x + w3 * a3.x + w4 * a4.x + w5 * a5.x + w6 * a6.x + w7 * a7.x + w8 * a8.x) / wn : m;
+	const float l = (a0.y * min(abs(a0.x - c), 0.3) + a1.y * min(abs(a1.x - c), 0.3) + a2.y * min(abs(a2.x - c), 0.3)
+		+ a3.y * min(abs(a3.x - c), 0.3) + a4.y * min(abs(a4.x - c), 0.3) + a5.y * min(abs(a5.x - c), 0.3)
+		+ a6.y * min(abs(a6.x - c), 0.3) + a7.y * min(abs(a7.x - c), 0.3) + a8.y * min(abs(a8.x - c), 0.3)) / n;
+	return float4(c, l, n, 1.0);
+}
+
+float calib_scale(int j)
+{
+	return 0.3 + 0.025 * j;
+}
+
+/// One texel per candidate scale: blend this frame's fit into its running average.
+float4 PS_Calib(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
+{
+	const int j = int(pos.x);
+	const float4 prev = tex2Dfetch(sCalibPrev, int2(j, 0));
+	if (j > 28)
+		return prev;
+	const float4 e = calib_eval(calib_scale(j));
+	if (e.w < 0.5)
+		return prev;
+	const float rate = prev.z > 0.5 ? 0.03 : 1.0;
+	return float4(lerp(prev.x, e.x, rate), lerp(prev.y, e.y, rate), 1.0, 0.0);
+}
+
+float4 PS_CalibCopy(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
+{
+	return tex2Dfetch(sCalib, int2(int(pos.x), 0));
+}
+
+/// The candidate with the lowest loss (leaning a little toward the scale the game reports, or the slider, when the views cannot tell them apart).
+float4 PS_CalibSel(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
+{
+	const float expected = DepthScaleAuto.x > 0.0 ? DepthScaleAuto.x : HostDepthRenderScale.x;
+	float best = 1e9, bs = 1.0, bk = 1.0, seen = 0.0;
+	[loop] for (int j = 0; j < 29; ++j)
+	{
+		const float4 e = tex2Dfetch(sCalib, int2(j, 0));
+		if (e.z < 0.5)
+			continue;
+		const float s = calib_scale(j);
+		const float l = e.y + 0.03 * abs(s - expected);
+		if (l < best)
+		{
+			best = l;
+			bs = s;
+			bk = exp(e.x);
+			seen = 1.0;
+		}
+	}
+	return float4(bs, bk, best, (seen > 0.5 && best < 0.12) ? 1.0 : 0.0);
 }
 
 void PS_Composite(float4 pos : SV_Position, float2 uv : TEXCOORD, out float4 outColor : SV_Target0, out float4 outInfo : SV_Target1)
@@ -156,13 +280,42 @@ void PS_Composite(float4 pos : SV_Position, float2 uv : TEXCOORD, out float4 out
 	outColor = float4(host, 1.0);
 	if (!McActive)
 		return;
+	const float4 cs = tex2Dlod(sCalibSel, float4(0.5, 0.5, 0.0, 0.0));
+	const bool calibrated = AutoDepth && cs.w > 0.5;
+	if (DebugView == 4)
+	{
+		// the fit of every candidate render scale (bar height = loss, capped), the winner in green, red = no data yet;
+		// below it the distance factor (blue; the tick is 1.0) and, when the fit is good enough to use, a green strip
+		float3 c = host * 0.3;
+		const float2 r = (uv - float2(0.05, 0.05)) / float2(0.5, 0.2);
+		if (all(r >= 0.0) && all(r <= 1.0))
+		{
+			const int j = min(int(r.x * 29.0), 28);
+			const float4 e = tex2Dlod(sCalib, float4((j + 0.5) / 32.0, 0.5, 0.0, 0.0));
+			const float h = saturate(e.y / 0.25);
+			const bool chosen = abs(calib_scale(j) - cs.x) < 0.0126;
+			c = (1.0 - r.y) < h ? (chosen ? float3(0.2, 1.0, 0.2) : float3(0.9, 0.9, 0.9)) : float3(0.05, 0.05, 0.05);
+			if (e.z < 0.5)
+				c = float3(0.35, 0.0, 0.0);
+		}
+		const float2 q = (uv - float2(0.05, 0.27)) / float2(0.5, 0.03);
+		if (all(q >= 0.0) && all(q <= 1.0))
+			c = q.x < saturate(cs.y * 0.5) ? float3(0.2, 0.4, 1.0) : float3(0.05, 0.05, 0.05);
+		if (abs(uv.x - (0.05 + 0.25)) < 0.0008 && uv.y > 0.27 && uv.y < 0.30)
+			c = float3(1.0, 1.0, 1.0);
+		const float2 g = (uv - float2(0.05, 0.31)) / float2(0.5, 0.012);
+		if (all(g >= 0.0) && all(g <= 1.0))
+			c = calibrated ? float3(0.2, 1.0, 0.2) : float3(1.0, 0.2, 0.2);
+		outColor = float4(c, 1.0);
+		return;
+	}
 	const float2 ouv = float2(uv.x, 1.0 - uv.y); // Minecraft's rows are bottom-up
 
 	// Where this GTA pixel's view ray lands in Minecraft's frame.
 	float2 muv = straight_uv(ouv);
 	bool inside = true;
-	const float2 depthScale = DepthScaleAuto.x > 0.0 ? DepthScaleAuto : HostDepthRenderScale;
-	const float zh = host_linear(tex2Dlod(ReShade::DepthBuffer, float4(uv * depthScale, 0, 0)).x);
+	const float2 depthScale = calibrated ? cs.xx : (DepthScaleAuto.x > 0.0 ? DepthScaleAuto : HostDepthRenderScale);
+	const float zh = host_linear_raw(tex2Dlod(ReShade::DepthBuffer, float4(uv * depthScale, 0, 0)).x) * (calibrated ? cs.y : HostDepthScale);
 	// how far behind GTA's surface Minecraft may still show: more where that surface is seen at a grazing angle
 	const float allow = min(DepthBias + SlopeBias * abs(ddy(zh)), max(MaxBias, DepthBias));
 	float zm = 1e9;
@@ -355,6 +508,24 @@ float3 PS_Final(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
 
 technique MCPassthrough < ui_tooltip = "Minecraft passthrough: enabled automatically while the Minecraft link is up."; >
 {
+	pass CalibFit
+	{
+		VertexShader = PostProcessVS;
+		PixelShader = PS_Calib;
+		RenderTarget = CalibTex;
+	}
+	pass CalibKeep
+	{
+		VertexShader = PostProcessVS;
+		PixelShader = PS_CalibCopy;
+		RenderTarget = CalibPrevTex;
+	}
+	pass CalibPick
+	{
+		VertexShader = PostProcessVS;
+		PixelShader = PS_CalibSel;
+		RenderTarget = CalibSelTex;
+	}
 	pass Light
 	{
 		VertexShader = PostProcessVS;
