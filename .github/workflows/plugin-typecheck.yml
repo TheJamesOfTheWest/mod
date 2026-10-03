@@ -1,0 +1,14 @@
+name: Type-check the Sons of the Forest plugin
+on:
+  push:
+    paths: ["sotf/**", "tools/sotf-stubcheck/**", ".github/workflows/plugin-typecheck.yml"]
+  workflow_dispatch:
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+      - run: dotnet build tools/sotf-stubcheck -c Release

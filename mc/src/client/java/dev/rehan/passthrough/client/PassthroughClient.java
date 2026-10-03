@@ -105,6 +105,8 @@ public class PassthroughClient implements ClientModInitializer {
 		ServerTickEvents.END_SERVER_TICK.register(server -> {
 			if (setupIn > 0 && --setupIn == 0) {
 				SETUP.forEach(WorldBridge::command);
+				// Ground columns and blocks the host sent while this world did not exist yet were dropped: ask it to send them again
+				Passthrough.events.accept("{\"t\":\"resync\"}");
 			}
 		});
 	}

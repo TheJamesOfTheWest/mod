@@ -3,6 +3,8 @@ on:
   push:
     paths: ["addon/**", ".github/workflows/addon.yml"]
   workflow_dispatch:
+permissions:
+  contents: write
 jobs:
   build:
     runs-on: windows-latest
@@ -25,3 +27,17 @@ jobs:
         with:
           name: sotf-addon
           path: pkg/
+      - name: Commit the package into dist/ (the installer downloads it from there)
+        shell: pwsh
+        run: |
+          Compress-Archive -Path pkg\* -DestinationPath dist\sotf-addon.zip -Force
+          Copy-Item addon\shaders\MCPassthrough.fx dist\MCPassthrough.fx -Force
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add dist
+          git diff --cached --quiet
+          if ($LASTEXITCODE -ne 0) {
+            git commit -m "ci: update add-on package"
+            git pull --rebase origin ${{ github.ref_name }}
+            git push origin HEAD:${{ github.ref_name }}
+          }

@@ -20,6 +20,8 @@ final class ClientInput {
 	/** The host's virtual cursor while a screen (inventory) is open, in GUI-scaled coordinates. */
 	private static double cursorX;
 	private static double cursorY;
+	/** Left button held on the host cursor: MouseHandler's own flag is not set for host clicks, and screens need it for dragging (sliders, scrollbar, item spreading). */
+	private static boolean leftDown;
 
 	private ClientInput() {
 	}
@@ -100,7 +102,7 @@ final class ClientInput {
 					((MouseHandlerAccessor) minecraft.mouseHandler).passthrough$setXpos(m.get("x").getAsDouble());
 					((MouseHandlerAccessor) minecraft.mouseHandler).passthrough$setYpos(m.get("y").getAsDouble());
 					minecraft.gui.screen().mouseMoved(x, y);
-					if (minecraft.mouseHandler.isLeftPressed()) {
+					if (leftDown) {
 						minecraft.gui.screen().mouseDragged(new MouseButtonEvent(x, y, new MouseButtonInfo(0, 0)), dx, dy);
 					}
 				}
@@ -109,8 +111,11 @@ final class ClientInput {
 				// {"t":"click","b":0 left | 1 right | 2 middle,"down":bool}
 				Passthrough.LOG.info("host click b={} down={} at ({},{}) screen={}", m.get("b").getAsInt(), m.get("down").getAsBoolean(), cursorX, cursorY,
 					minecraft.gui.screen() == null ? "none" : minecraft.gui.screen().getClass().getSimpleName());
+				if (m.get("b").getAsInt() == 0) {
+					leftDown = m.get("down").getAsBoolean() && minecraft.gui.screen() != null;
+				}
 				if (minecraft.gui.screen() != null) {
-					MouseButtonEvent event = new MouseButtonEvent(cursorX, cursorY, new MouseButtonInfo(m.get("b").getAsInt(), 0));
+					MouseButtonEvent event = new MouseButtonEvent(cursorX, cursorY, new MouseButtonInfo(m.get("b").getAsInt(), m.has("mods") ? m.get("mods").getAsInt() : 0));
 					if (m.get("down").getAsBoolean()) {
 						minecraft.gui.screen().mouseClicked(event, false);
 					} else {

@@ -25,7 +25,9 @@ namespace SotfPassthrough
         HostShm _shm;
         bool _mcMode;                 // F7: mouse buttons, wheel and 1-9 go to Minecraft
         readonly bool[] _prev = new bool[256];
-        float _lastScroll;
+        bool _focused = true;         // the game window had the keyboard focus at the last poll
+        bool _lookB, _scrB, _moveB;   // what ApplyScreenInput last asked the game to block
+        int _vw, _vh, _pw, _ph; float _vSince; // Minecraft's window size as last sent, and a size change waiting to settle
         float _nextReassert;
         readonly bool[] _prevText = new bool[256];
         readonly float[] _repeatAt = new float[256];
@@ -58,24 +60,37 @@ namespace SotfPassthrough
                 _nextLog = Time.unscaledTime + 5f;
                 Plugin.Instance.Log.LogInfo("status: camera=" + (cam == null ? "none" : cam.name + " pos=" + cam.transform.position) + " ws=" + _ws.Connected + " offset=" + (_haveOffset ? _yOffset.ToString("0.00") : "unset") + " groundColumnsSent=" + _sampled.Count);
             }
-            if (cam == null || !_ws.Connected) { _shm.Write(false, 0.3f, 1000f, 60f, 0, 0, 0, 0, 0, 0); return; }
+            if (!_ws.Connected && (_mcMode || _mcScreen || _walk))
+            {
+                // Minecraft went away: give the game its player back (F6/F7/F11 must stay usable, so this runs before the early returns)
+                Plugin.Instance.Log.LogInfo("Minecraft link lost: handing the player back to the game");
+                ResetMc();
+            }
+            if (cam == null || !_ws.Connected) { _shm.Write(false, 0.3f, 1000f, 60f, 0, 0, 0, 0, 0, 0); PollInput(); return; }
             // Only the first-person gameplay camera counts: cutscenes, the title screen and the death camera are not our world.
             bool gameplay = cam.name == "MainCameraFP";
             if (gameplay != _wasGameplay)
             {
                 _wasGameplay = gameplay;
                 Plugin.Instance.Log.LogInfo("gameplay camera " + (gameplay ? "active" : "lost (" + cam.name + ")") + ": resetting Minecraft state");
-                if (_walk) _ws.Send("{\"t\":\"walk\",\"on\":false}");
-                _walk = false; _mcMode = false; _mcScreen = false; _haveMcPos = false;
-                ReleaseKeys();
-                Hooks.ReleaseAll();
+                ResetMc();
                 // the world was (re)loaded: the old ground, offset and blocks no longer match it
                 _sampled.Clear(); _retryAt.Clear(); _heights.Clear(); _dirty.Clear(); _sentAt.Clear(); _haveOffset = false; _lastSurface = float.NaN;
                 _ws.Send("{\"t\":\"clear\"}"); Hooks.ClearBlocks();
                 if (gameplay) _ws.Send("{\"t\":\"blocksync\",\"r\":48}");
             }
-            if (!gameplay) { _shm.Write(false, 0.3f, 1000f, 60f, 0, 0, 0, 0, 0, 0); return; }
-            if (_ws.JustConnected) { _ws.JustConnected = false; _sampled.Clear(); _retryAt.Clear(); _heights.Clear(); _dirty.Clear(); _sentAt.Clear(); _haveOffset = false; _ws.Send("{\"t\":\"clear\"}"); _ws.Send("{\"t\":\"view\",\"w\":" + Screen.width + ",\"h\":" + Screen.height + "}"); _ws.Send("{\"t\":\"blocksync\",\"r\":48}"); Hooks.ClearBlocks(); }
+            if (!gameplay) { _shm.Write(false, 0.3f, 1000f, 60f, 0, 0, 0, 0, 0, 0); PollInput(); return; }
+            if (_ws.JustConnected)
+            {
+                _ws.JustConnected = false;
+                ResetMc(); // a fresh Minecraft knows nothing of what this side switched on (and a stale walk=true there must not survive)
+                _sampled.Clear(); _retryAt.Clear(); _heights.Clear(); _dirty.Clear(); _sentAt.Clear(); _haveOffset = false;
+                _ws.Send("{\"t\":\"clear\"}");
+                _vw = _pw = Screen.width; _vh = _ph = Screen.height;
+                _ws.Send("{\"t\":\"view\",\"w\":" + Screen.width + ",\"h\":" + Screen.height + "}");
+                _ws.Send("{\"t\":\"blocksync\",\"r\":48}"); Hooks.ClearBlocks();
+            }
+            SendViewIfResized();
             while (_ws.TryReceive(out string incoming)) HandleMessage(incoming);
 
             var t = cam.transform;
@@ -86,7 +101,7 @@ namespace SotfPassthrough
             if (!_haveOffset)
             {
                 if (Ground(feet + Vector3.up * 1.5f, out float g)) { _yOffset = 100f - g; _haveOffset = true; Dbg.Line("[offset] ground y=" + g + " -> Minecraft y=100, yOffset=" + _yOffset); } // keeps the world inside Minecraft's height range (-64..320) wherever the player stands
-                else return;
+                else { PollInput(); return; }
             }
 
             float yaw = (float)(Math.Atan2(fwd.x, fwd.z) * 180.0 / Math.PI);
@@ -146,6 +161,7 @@ namespace SotfPassthrough
             PollInput();
         }
 
+        [Il2CppInterop.Runtime.Attributes.HideFromIl2Cpp]
         void Edge(int vk, Action<bool> onChange)
         {
             bool d = RawInput.Down(vk);
@@ -154,20 +170,40 @@ namespace SotfPassthrough
 
         void PollInput()
         {
-            if (!RawInput.GameFocused()) return;
-            Edge(0x76, d => { if (d) { _mcMode = !_mcMode; Plugin.Instance.Log.LogInfo("Minecraft mode " + (_mcMode ? "ON" : "OFF")); Dbg.Line("[key] F7 minecraft mode " + (_mcMode ? "ON" : "OFF")); Hooks.SetInputBlocked(_mcMode); if (!_mcMode) Hooks.HideBody(false); _nextReassert = Time.unscaledTime + 2f; if (!_mcMode) ReleaseKeys(); } }); // F7
+            if (!RawInput.GameFocused())
+            {
+                // alt-tabbed away: nothing we forwarded may stay held in Minecraft
+                if (_focused) { _focused = false; ReleaseKeys(); if (_mcScreen) { _ws.Send("{\"t\":\"click\",\"b\":0,\"down\":false}"); _ws.Send("{\"t\":\"click\",\"b\":1,\"down\":false}"); } Array.Clear(_prev, 0, _prev.Length); }
+                return;
+            }
+            if (!_focused) { _focused = true; foreach (int b in new[] { 0x01, 0x02, 0x04 }) _prev[b] = RawInput.Down(b); } // the click that refocused the window is not a new press
+            bool live = _ws.Connected && _wasGameplay;
+            Edge(0x76, d =>
+            {
+                if (!d) return;
+                if (_mcMode) LeaveMc();
+                else if (live) { _mcMode = true; Hooks.SetInputBlocked(true); ApplyScreenInput(); }
+                else return;
+                Plugin.Instance.Log.LogInfo("Minecraft mode " + (_mcMode ? "ON" : "OFF")); Dbg.Line("[key] F7 minecraft mode " + (_mcMode ? "ON" : "OFF"));
+                _nextReassert = Time.unscaledTime + 2f;
+            }); // F7
             Edge(0x77, d => { if (d) { try { TypeDump.Run(BepInEx.Paths.BepInExRootPath); Plugin.Instance.Log.LogInfo("Wrote sotf-types.txt and sotf-members.txt to " + BepInEx.Paths.BepInExRootPath); } catch (Exception e) { Plugin.Instance.Log.LogError(e.ToString()); } } }); // F8
             Edge(0x78, d => { if (d) { try { TypeDump.RunRequest(BepInEx.Paths.BepInExRootPath); Plugin.Instance.Log.LogInfo("Wrote sotf-request.txt"); } catch (Exception e) { Plugin.Instance.Log.LogError(e.ToString()); } } }); // F9
-            Edge(0x79, d => { if (d) { var c = Camera.main; Hooks.SpawnExplosion(c.transform.position + c.transform.forward * 8f); } }); // F10: test explosion 8 m ahead
-            Edge(0x75, d => { if (d) ToggleWalk(); }); // F6: Steve drives
-            Edge(0x7A, d => { if (d) { _mcMode = false; _walk = false; _mcScreen = false; Hooks.Unstick(); } }); // F11: undo everything
-            if (!_mcMode) return;
+            Edge(0x79, d => { var c = Camera.main; if (d && c != null) Hooks.SpawnExplosion(c.transform.position + c.transform.forward * 12f, 4f); }); // F10: a TNT-sized test explosion 12 m ahead
+            Edge(0x75, d => { if (d && (live || _walk)) ToggleWalk(); }); // F6: Steve drives
+            Edge(0x7A, d => { if (d) { ResetMc(); Hooks.Unstick(); } }); // F11: undo everything, on both sides
+            if (!_mcMode || !live) return;
             if (_walk && !_mcScreen)
             {
                 Edge(0x57, d => Key("forward", d)); Edge(0x53, d => Key("back", d)); Edge(0x41, d => Key("left", d)); Edge(0x44, d => Key("right", d));
                 Edge(0x20, d => Key("jump", d)); Edge(0xA0, d => Key("sneak", d)); Edge(0xA2, d => Key("sprint", d));
             }
-            if (Time.unscaledTime > _nextReassert) { _nextReassert = Time.unscaledTime + 2f; Hooks.SetInputBlocked(true); }
+            if (Time.unscaledTime > _nextReassert)
+            {
+                _nextReassert = Time.unscaledTime + 2f; Hooks.SetInputBlocked(true);
+                if (_walk || _mcScreen) Hooks.SetMoveBlocked(true);
+                if (_mcScreen) { Hooks.SetLookBlocked(true); Hooks.SetScreenBlocked(true); }
+            }
             Edge(0x45, d => { if (d && !_mcScreen) { Key("inventory", true); Key("inventory", false); } }); // E opens the Minecraft inventory (once open, keys go to the screen, so E can close it or type into a search box)
             Edge(0x1B, d => { if (d && _mcScreen) Key("escape", true); });                                                                              // Esc closes a Minecraft screen
             if (_mcScreen)
@@ -188,8 +224,9 @@ namespace SotfPassthrough
                     else if (sc < -0.01f) _ws.Send("{\"t\":\"mscroll\",\"d\":-1}");
                 }
                 catch (Exception) { }
-                Edge(0x01, d => _ws.Send("{\"t\":\"click\",\"b\":0,\"down\":" + (d ? "true" : "false") + "}"));
-                Edge(0x02, d => _ws.Send("{\"t\":\"click\",\"b\":1,\"down\":" + (d ? "true" : "false") + "}"));
+                int cm = (RawInput.Down(0x10) ? 3 : 0) | (RawInput.Down(0x11) ? 192 : 0) | (RawInput.Down(0x12) ? 768 : 0); // shift/ctrl/alt for shift-click, ctrl-click
+                Edge(0x01, d => _ws.Send("{\"t\":\"click\",\"b\":0,\"down\":" + (d ? "true" : "false") + ",\"mods\":" + cm + "}"));
+                Edge(0x02, d => _ws.Send("{\"t\":\"click\",\"b\":1,\"down\":" + (d ? "true" : "false") + ",\"mods\":" + cm + "}"));
                 return;
             }
             Edge(0x01, d => { Key("attack", d); if (d) Hooks.TryChop(Camera.main); });
@@ -199,8 +236,8 @@ namespace SotfPassthrough
             try
             {
                 float sc = UnityEngine.InputSystem.Mouse.current.scroll.ReadValue().y / 120f; // the game uses the new Input System
-                if (sc > 0.01f) _ws.Send("{\"t\":\"scroll\",\"d\":-1}");
-                else if (sc < -0.01f) _ws.Send("{\"t\":\"scroll\",\"d\":1}");
+                if (sc > 0.01f) _ws.Send("{\"t\":\"scroll\",\"d\":1}");
+                else if (sc < -0.01f) _ws.Send("{\"t\":\"scroll\",\"d\":-1}");
             }
             catch (Exception) { }
         }
@@ -242,6 +279,11 @@ namespace SotfPassthrough
                         _haveMcPos = true;
                         break;
                     }
+                    case "resync":
+                        // Minecraft's world just (re)started: the ground and blocks sent while it had no world were dropped. Probe and send them again.
+                        _sampled.Clear(); _retryAt.Clear();
+                        _ws.Send("{\"t\":\"blocksync\",\"r\":48}");
+                        break;
                     case "screen":
                     {
                         bool open = root.GetProperty("open").GetBoolean();
@@ -249,7 +291,9 @@ namespace SotfPassthrough
                         {
                             _mcScreen = open;
                             _cx = Screen.width * 0.5f; _cy = Screen.height * 0.5f; _lastCx = _lastCy = -1;
-                            Hooks.SetLookBlocked(open);
+                            // a key still held as the screen opens (the E that opened it) is not a new press for the screen
+                            if (open) foreach (int vk in ScreenKeys) { _prevText[vk] = RawInput.Down(vk); _repeatAt[vk] = float.MaxValue; }
+                            ApplyScreenInput();
                             Plugin.Instance.Log.LogInfo("Minecraft screen " + (open ? "open" : "closed") + " (cursor starts at " + _cx + "," + _cy + ", window " + Screen.width + "x" + Screen.height + ", game focused: " + RawInput.GameFocused() + ")");
                         }
                         break;
@@ -339,12 +383,12 @@ namespace SotfPassthrough
                 _camOffset = cam.transform.position - body;
                 _haveMcPos = false; _lastSurface = float.NaN;
                 if (!_mcMode) { _mcMode = true; Hooks.SetInputBlocked(true); }
-                Hooks.SetMoveBlocked(true); Hooks.SetBodyKinematic(true); Hooks.SetBlocksEnabled(false);
+                ApplyScreenInput(); Hooks.SetBodyKinematic(true); Hooks.SetBlocksEnabled(false);
                 _ws.Send("{\"t\":\"walk\",\"on\":true}");
             }
             else
             {
-                Hooks.SetMoveBlocked(false); Hooks.SetBodyKinematic(false); Hooks.SetBlocksEnabled(true);
+                ApplyScreenInput(); Hooks.SetBodyKinematic(false); Hooks.SetBlocksEnabled(true);
                 _ws.Send("{\"t\":\"walk\",\"on\":false}");
                 foreach (var k in new[] { "forward", "back", "left", "right", "jump", "sneak", "sprint" }) Key(k, false);
             }
@@ -353,7 +397,51 @@ namespace SotfPassthrough
 
         void Key(string k, bool down) { _ws.Send("{\"t\":\"key\",\"k\":\"" + k + "\",\"down\":" + (down ? "true" : "false") + "}"); }
 
-        void ReleaseKeys() { Key("attack", false); Key("use", false); Key("pick", false); }
+        void ReleaseKeys() { foreach (var k in new[] { "attack", "use", "pick", "forward", "back", "left", "right", "jump", "sneak", "sprint" }) Key(k, false); }
+
+        /// <summary>What the game's own input must not see right now: look, pause and the keyboard actions while a Minecraft screen is open; movement while a screen is open or Steve walks.</summary>
+        void ApplyScreenInput()
+        {
+            bool scr = _mcMode && _mcScreen;
+            if (scr != _lookB) { _lookB = scr; Hooks.SetLookBlocked(scr); }
+            if (scr != _scrB) { _scrB = scr; Hooks.SetScreenBlocked(scr); }
+            bool mv = scr || _walk;
+            if (mv != _moveB) { _moveB = mv; Hooks.SetMoveBlocked(mv); }
+        }
+
+        /// <summary>F7 off: leave walk mode and any open Minecraft screen, hand input back to the game.</summary>
+        void LeaveMc()
+        {
+            if (_walk) ToggleWalk();
+            if (_mcScreen) Key("escape", true);
+            _mcMode = false; _mcScreen = false;
+            Hooks.SetInputBlocked(false); Hooks.HideBody(false);
+            ApplyScreenInput();
+            ReleaseKeys();
+        }
+
+        /// <summary>Everything we switched on, off, on both sides (F11, link lost, camera lost, reconnect). Safe to call when nothing is on.</summary>
+        void ResetMc()
+        {
+            _ws.Send("{\"t\":\"walk\",\"on\":false}");
+            if (_mcScreen) Key("escape", true);
+            ReleaseKeys();
+            _walk = false; _mcMode = false; _mcScreen = false; _haveMcPos = false;
+            _lookB = _scrB = _moveB = false;
+            Hooks.ReleaseAll();
+        }
+
+        /// <summary>The game window can be resized: tell Minecraft once the new size has held for half a second, so the virtual cursor still lines up.</summary>
+        void SendViewIfResized()
+        {
+            int sw = Screen.width, sh = Screen.height;
+            if (sw <= 0 || sh <= 0 || (sw == _vw && sh == _vh)) return;
+            if (sw != _pw || sh != _ph) { _pw = sw; _ph = sh; _vSince = Time.unscaledTime; return; }
+            if (Time.unscaledTime - _vSince < 0.5f) return;
+            _vw = sw; _vh = sh;
+            _ws.Send("{\"t\":\"view\",\"w\":" + sw + ",\"h\":" + sh + "}");
+            if (_mcScreen) { _cx = Mathf.Clamp(_cx, 0f, sw - 1f); _cy = Mathf.Clamp(_cy, 0f, sh - 1f); _lastCx = _lastCy = -1; }
+        }
 
 
         static bool Ground(Vector3 from, out float groundY)
@@ -390,7 +478,14 @@ namespace SotfPassthrough
                 if (_sampled.Contains(key)) continue;
                 if (_retryAt.TryGetValue(key, out float at) && Time.unscaledTime < at) continue;
                 if (++probes > ProbesPerFrame) break;
-                if (!Ground(new Vector3(-(mx + 0.5f), feet.y + 1.5f, mz + 0.5f), out float g)) { _retryAt[key] = Time.unscaledTime + 3f; continue; }
+                // start the ray above the ground we already know beside this column, so uphill terrain is not probed from underneath it
+                float oy = feet.y + 1.5f;
+                if (_heights.TryGetValue(HKey(mx - 1, mz), out float n0)) oy = Mathf.Max(oy, n0 - _yOffset + 1.5f);
+                if (_heights.TryGetValue(HKey(mx + 1, mz), out float n1)) oy = Mathf.Max(oy, n1 - _yOffset + 1.5f);
+                if (_heights.TryGetValue(HKey(mx, mz - 1), out float n2)) oy = Mathf.Max(oy, n2 - _yOffset + 1.5f);
+                if (_heights.TryGetValue(HKey(mx, mz + 1), out float n3)) oy = Mathf.Max(oy, n3 - _yOffset + 1.5f);
+                oy = Mathf.Min(oy, feet.y + 40f);
+                if (!Ground(new Vector3(-(mx + 0.5f), oy, mz + 0.5f), out float g)) { _retryAt[key] = Time.unscaledTime + 3f; continue; }
                 _retryAt.Remove(key);
                 _sampled.Add(key);
                 int top = (int)Math.Floor(g + _yOffset) - 1; // the invisible ground blocks stay at or below the terrain: the player walks on the triangles above them

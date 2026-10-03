@@ -241,9 +241,9 @@ public final class WorldBridge {
 
 			BlockPos c = player.blockPosition();
 			BlockPos.MutableBlockPos p = new BlockPos.MutableBlockPos();
-			int found = 0;
-			for (int x = -radius; x <= radius && found < 3000; x++) {
-				for (int z = -radius; z <= radius && found < 3000; z++) {
+			java.util.List<BlockPos> solids = new java.util.ArrayList<>();
+			for (int x = -radius; x <= radius; x++) {
+				for (int z = -radius; z <= radius; z++) {
 					for (int y = -24; y <= 40; y++) {
 						p.set(c.getX() + x, c.getY() + y, c.getZ() + z);
 						if (!level.isInWorldBounds(p) || !level.isLoaded(p)) {
@@ -252,11 +252,16 @@ public final class WorldBridge {
 
 						BlockState state = level.getBlockState(p);
 						if (solidForHost(level, p, state)) {
-							changes.put(p.immutable(), true);
-							found++;
+							solids.add(p.immutable());
 						}
 					}
 				}
+			}
+
+			// nearest first, so the host (which can only hold so many colliders) keeps the blocks around the player
+			solids.sort(java.util.Comparator.comparingDouble(b -> b.distSqr(c)));
+			for (int i = 0; i < solids.size() && i < 3000; i++) {
+				changes.put(solids.get(i), true);
 			}
 
 			flush(s);

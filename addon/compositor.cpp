@@ -144,15 +144,19 @@ namespace
 			}
 			reshade::log::message(reshade::log::level::info, "MCPassthrough: connected to the Sons of the Forest plugin");
 		}
-		const int64_t seq = read<int64_t>(g_hostView + 8);
+		// seqlock: the writer makes seq odd while it writes. The volatile reads and fences keep the compiler from merging the two reads of seq.
+		const volatile int64_t *const seqp = reinterpret_cast<const volatile int64_t *>(g_hostView + 8);
+		const int64_t seq = *seqp;
 		if (seq & 1)
 			return;
+		std::atomic_thread_fence(std::memory_order_acquire);
 		const int32_t active = read<int32_t>(g_hostView + 16);
 		const float nearClip = read<float>(g_hostView + 20), farClip = read<float>(g_hostView + 24), fov = read<float>(g_hostView + 28);
 		const float yaw = read<float>(g_hostView + 32), pitch = read<float>(g_hostView + 36), roll = read<float>(g_hostView + 40);
 		const double x = read<double>(g_hostView + 48), y = read<double>(g_hostView + 56), z = read<double>(g_hostView + 64);
 		const float depthScaleX = read<float>(g_hostView + 72), depthScaleY = read<float>(g_hostView + 76);
-		if (read<int64_t>(g_hostView + 8) != seq)
+		std::atomic_thread_fence(std::memory_order_acquire);
+		if (*seqp != seq)
 			return;
 		g_active = active != 0;
 		g_depthScaleX = depthScaleX;

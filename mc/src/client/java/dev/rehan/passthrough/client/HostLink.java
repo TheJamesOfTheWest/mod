@@ -10,6 +10,7 @@ import dev.rehan.passthrough.WorldBridge;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
 import java.util.Locale;
+import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import org.java_websocket.WebSocket;
 import org.java_websocket.handshake.ClientHandshake;
@@ -60,6 +61,19 @@ public final class HostLink extends WebSocketServer {
 	@Override
 	public void onClose(final WebSocket conn, final int code, final String reason, final boolean remote) {
 		Passthrough.LOG.info("host disconnected ({} {})", code, reason);
+		if (this.getConnections().isEmpty()) {
+			// the host is gone (closed, crashed): don't leave Steve walking, keys held or a screen waiting for a cursor nobody drives
+			Passthrough.walk = false;
+			PlayerSync.resetSafe();
+			Minecraft minecraft = Minecraft.getInstance();
+			minecraft.execute(() -> {
+				KeyMapping.releaseAll();
+				if (minecraft.player != null) {
+					minecraft.player.getAbilities().flying = true;
+					minecraft.player.onUpdateAbilities();
+				}
+			});
+		}
 	}
 
 	@Override
@@ -113,7 +127,7 @@ public final class HostLink extends WebSocketServer {
 					Minecraft minecraft = Minecraft.getInstance();
 					minecraft.execute(() -> {
 						if (minecraft.player != null) {
-							minecraft.player.getAbilities().flying = false;
+							minecraft.player.getAbilities().flying = !on; // walking: gravity; otherwise back to the creative flight the follow mode uses
 							minecraft.player.onUpdateAbilities();
 						}
 					});

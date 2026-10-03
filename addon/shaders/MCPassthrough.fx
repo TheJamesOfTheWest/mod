@@ -211,13 +211,23 @@ void PS_Composite(float4 pos : SV_Position, float2 uv : TEXCOORD, out float4 out
 	{
 		// The march can step over thin or grazing geometry: fall back to looking straight at Minecraft's frame, which is
 		// right whenever the two cameras agree (the usual case).
+		// Only accept it when that surface really lies on this pixel's view ray: take Minecraft's point at duv into GTA's
+		// camera and see where it lands. If the cameras differ it lands elsewhere, and drawing it here would paint a second,
+		// unwarped copy of Minecraft.
 		const float2 duv = ouv;
 		const float zd = mc_linear(tex2D(sDepth, duv).r);
 		if (tex2D(sWorld, duv).a > 0.0 && zd < 1e8)
 		{
-			muv = duv;
-			zm = zd;
-			inside = true;
+			const float2 mcs = float2(WarpTan.y * WarpTan.z, WarpTan.y);
+			const float3 qd = float3((uv.x * 2.0 - 1.0) * mcs.x, (1.0 - uv.y * 2.0) * mcs.y, -1.0) * zd - WarpT;
+			const float3 gd = float3(dot(float3(WarpRow0.x, WarpRow1.x, WarpRow2.x), qd), dot(float3(WarpRow0.y, WarpRow1.y, WarpRow2.y), qd), dot(float3(WarpRow0.z, WarpRow1.z, WarpRow2.z), qd));
+			const float2 gn = gd.xy / -gd.z / float2(WarpTan.x * BUFFER_WIDTH * BUFFER_RCP_HEIGHT, WarpTan.x);
+			if (gd.z < -1e-3 && all(abs(gn - float2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0)) < 4.0 * BUFFER_PIXEL_SIZE))
+			{
+				muv = duv;
+				zm = zd;
+				inside = true;
+			}
 		}
 	}
 	const float4 world = inside ? tex2D(sWorld, muv) : 0.0;

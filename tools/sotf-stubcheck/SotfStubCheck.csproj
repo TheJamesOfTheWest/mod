@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Type-checks the Sons of the Forest plugin against hand-written stubs of the Unity / BepInEx / game APIs it uses.
+       It proves our own code compiles (scopes, definite assignment, lambdas); it cannot prove a game API exists: the real build
+       (sotf/SotfPassthrough.csproj, run by the installer on the player's PC) is the only check of that.
+       When the plugin starts using a new API, add its signature to stubs.cs.   dotnet build tools/sotf-stubcheck -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <AssemblyName>SotfPassthrough</AssemblyName>
+    <RootNamespace>SotfPassthrough</RootNamespace>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <NoWarn>CA1416;CS0109;CS0169</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="stubs.cs" />
+    <Compile Include="../../sotf/PassthroughBehaviour.cs" />
+    <Compile Include="../../sotf/Hooks.cs" />
+    <Compile Include="../../sotf/Input.cs" />
+    <Compile Include="../../sotf/HostShm.cs" />
+    <Compile Include="../../sotf/Dbg.cs" />
+    <Compile Include="../../sotf/WsClient.cs" />
+    <Compile Include="../../sotf/Plugin.cs" />
+  </ItemGroup>
+</Project>
