@@ -4,6 +4,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <mutex>
 #include <reshade.hpp>
@@ -331,6 +332,19 @@ namespace
 		if (on)
 			upload(runtime);
 		on = on && g_hasFrame;
+		{
+			static DWORD nextLog = 0;
+			static bool lastOn = false;
+			if (GetTickCount() >= nextLog || on != lastOn)
+			{
+				nextLog = GetTickCount() + 5000;
+				lastOn = on;
+				char msg[256];
+				snprintf(msg, sizeof(msg), "MCPassthrough status: hostActive=%d hostMap=%d mcMap=%d mcFrame=%d mc=%ux%u backbuffer=%ux%u hostPlanes=%.2f..%.1f",
+					int(g_active.load()), g_hostView != nullptr, g_view != nullptr, int(g_hasFrame), g_width, g_height, bw, bh, g_hostNear.load(), g_hostFar.load());
+				reshade::log::message(reshade::log::level::info, msg);
+			}
+		}
 		// The technique stays enabled (preset); McActive gates it, so GTA passes through untouched until a
 		// Minecraft frame is here. (Toggling techniques from inside this callback crashes ReShade.)
 		if (const effect_uniform_variable v = runtime->find_uniform_variable(kEffect, "McActive"); v.handle != 0)
