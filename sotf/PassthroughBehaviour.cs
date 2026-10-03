@@ -41,6 +41,7 @@ namespace SotfPassthrough
         float _cx, _cy;               // virtual cursor, in Minecraft-window pixels
         float _lastCx = -1, _lastCy = -1;
         float _nextLog;
+        bool _wasGameplay;            // the first-person gameplay camera (MainCameraFP) is the active one
         float _yOffset; bool _haveOffset;
         readonly HashSet<long> _sampled = new HashSet<long>();
         // columns whose raycast found nothing (water, holes, not streamed in): retry later so they don't starve the nearer-first probe budget
@@ -58,6 +59,22 @@ namespace SotfPassthrough
                 Plugin.Instance.Log.LogInfo("status: camera=" + (cam == null ? "none" : cam.name + " pos=" + cam.transform.position) + " ws=" + _ws.Connected + " offset=" + (_haveOffset ? _yOffset.ToString("0.00") : "unset") + " groundColumnsSent=" + _sampled.Count);
             }
             if (cam == null || !_ws.Connected) { _shm.Write(false, 0.3f, 1000f, 60f, 0, 0, 0, 0, 0, 0); return; }
+            // Only the first-person gameplay camera counts: cutscenes, the title screen and the death camera are not our world.
+            bool gameplay = cam.name == "MainCameraFP";
+            if (gameplay != _wasGameplay)
+            {
+                _wasGameplay = gameplay;
+                Plugin.Instance.Log.LogInfo("gameplay camera " + (gameplay ? "active" : "lost (" + cam.name + ")") + ": resetting Minecraft state");
+                if (_walk) _ws.Send("{\"t\":\"walk\",\"on\":false}");
+                _walk = false; _mcMode = false; _mcScreen = false; _haveMcPos = false;
+                ReleaseKeys();
+                Hooks.ReleaseAll();
+                // the world was (re)loaded: the old ground, offset and blocks no longer match it
+                _sampled.Clear(); _retryAt.Clear(); _heights.Clear(); _dirty.Clear(); _sentAt.Clear(); _haveOffset = false; _lastSurface = float.NaN;
+                _ws.Send("{\"t\":\"clear\"}"); Hooks.ClearBlocks();
+                if (gameplay) _ws.Send("{\"t\":\"blocksync\",\"r\":48}");
+            }
+            if (!gameplay) { _shm.Write(false, 0.3f, 1000f, 60f, 0, 0, 0, 0, 0, 0); return; }
             if (_ws.JustConnected) { _ws.JustConnected = false; _sampled.Clear(); _retryAt.Clear(); _heights.Clear(); _dirty.Clear(); _sentAt.Clear(); _haveOffset = false; _ws.Send("{\"t\":\"clear\"}"); _ws.Send("{\"t\":\"view\",\"w\":" + Screen.width + ",\"h\":" + Screen.height + "}"); _ws.Send("{\"t\":\"blocksync\",\"r\":48}"); Hooks.ClearBlocks(); }
             while (_ws.TryReceive(out string incoming)) HandleMessage(incoming);
 

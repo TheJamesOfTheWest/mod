@@ -233,6 +233,12 @@ namespace SotfPassthrough
             catch (Exception e) { Log("HideBody failed: " + e.Message); }
         }
 
+        /// <summary>Everything we switched off, restored (no healing): used when the world reloads, e.g. after dying.</summary>
+        public static void ReleaseAll()
+        {
+            SetInputBlocked(false); SetLookBlocked(false); SetMoveBlocked(false); HideBody(false); SetBodyKinematic(false); SetBlocksEnabled(true);
+        }
+
         /// <summary>F11: undo everything we switched off, and heal.</summary>
         public static void Unstick()
         {
