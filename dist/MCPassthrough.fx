@@ -22,9 +22,9 @@ uniform bool McActive = false;
 
 // Upscalers (DLSS, FSR, dynamic resolution) draw the scene into the top-left corner of a larger depth texture. The depth of
 // screen position uv is then at uv * scale: 0.667 for "Quality" modes, 0.58 Balanced, 0.5 Performance, 1.0 for no upscaling.
-uniform float2 HostDepthScale < ui_type = "drag"; ui_min = 0.2; ui_max = 1.0; ui_step = 0.001; ui_label = "Depth buffer render scale";
+uniform float2 HostDepthRenderScale < ui_type = "drag"; ui_min = 0.2; ui_max = 1.0; ui_step = 0.001; ui_label = "Depth buffer render scale";
 	ui_tooltip = "Set to 1.0 if the game's upscaler (DLSS/FSR) is off. 0.667 = Quality, 0.58 = Balanced, 0.5 = Performance. Check with Debug view 'GTA depth': the stripes must fill the whole screen."; > = float2(0.6667, 0.6667);
-// Set by the add-on when the game reports its render scale (0 = unknown: use HostDepthScale).
+// Set by the add-on when the game reports its render scale (0 = unknown: use HostDepthRenderScale).
 uniform float2 DepthScaleAuto = float2(0.0, 0.0);
 
 uniform bool HostReversedZ < ui_label = "GTA depth is reversed"; > = true;
@@ -153,7 +153,7 @@ void PS_Composite(float4 pos : SV_Position, float2 uv : TEXCOORD, out float4 out
 	// Where this GTA pixel's view ray lands in Minecraft's frame.
 	float2 muv = ouv;
 	bool inside = true;
-	const float2 depthScale = DepthScaleAuto.x > 0.0 ? DepthScaleAuto : HostDepthScale;
+	const float2 depthScale = DepthScaleAuto.x > 0.0 ? DepthScaleAuto : HostDepthRenderScale;
 	const float zh = host_linear(tex2Dlod(ReShade::DepthBuffer, float4(uv * depthScale, 0, 0)).x);
 	// how far behind GTA's surface Minecraft may still show: more where that surface is seen at a grazing angle
 	const float allow = min(DepthBias + SlopeBias * abs(ddy(zh)), max(MaxBias, DepthBias));
