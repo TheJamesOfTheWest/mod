@@ -121,7 +121,7 @@ namespace SotfPassthrough
                 {
                     long k = Key(set[i], set[i + 1], set[i + 2]);
                     if (Blocks.ContainsKey(k) || Blocks.Count >= MaxBlocks) continue;
-                    var go = new GameObject("MCBlock"); go.layer = 2;
+                    var go = new GameObject("MCBlock");
                     go.transform.position = new Vector3(-(set[i] + 0.5f), set[i + 1] + 0.5f - yOffset, set[i + 2] + 0.5f);
                     var box = go.AddComponent<BoxCollider>();
                     box.size = Vector3.one;

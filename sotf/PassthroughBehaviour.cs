@@ -240,9 +240,17 @@ namespace SotfPassthrough
 
         static bool Ground(Vector3 from, out float groundY)
         {
-            // Layer mask: everything except "Ignore Raycast" (layer 2). Water, triggers and the player's own collider may need excluding: TODO from the dump.
-            if (Physics.Raycast(from, Vector3.down, out RaycastHit hit, 80f, ~(1 << 2), QueryTriggerInteraction.Ignore)) { groundY = hit.point.y; return true; }
-            groundY = 0; return false;
+            // The nearest hit that is not one of our own Minecraft-block colliders (those must stay on the default layer so the game's
+            // controller treats them as ground). Water, triggers and the player's own collider may need excluding: TODO from the dump.
+            var hits = Physics.RaycastAll(from, Vector3.down, 80f, ~(1 << 2), QueryTriggerInteraction.Ignore);
+            float best = float.MaxValue; groundY = 0;
+            for (int i = 0; i < hits.Length; i++)
+            {
+                var h = hits[i];
+                if (h.collider == null || h.collider.gameObject.name == "MCBlock") continue;
+                if (h.distance < best) { best = h.distance; groundY = h.point.y; }
+            }
+            return best < float.MaxValue;
         }
 
         void SampleGround(Vector3 feet)
