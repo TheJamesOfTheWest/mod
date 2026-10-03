@@ -14,6 +14,7 @@ public final class PlayerSync {
 	/** How far the host's player moved over the last client tick (drives the walk animation). */
 	private static float tickDistance;
 	private static double lastX = Double.NaN, lastZ;
+	private static long lastWalkLog;
 
 	private PlayerSync() {
 	}
@@ -44,6 +45,11 @@ public final class PlayerSync {
 			}
 
 			Vec3 at = player.getPosition(partialTick);
+			if (System.nanoTime() - lastWalkLog > 1_000_000_000L) {
+				lastWalkLog = System.nanoTime();
+				Passthrough.LOG.info("walk: pos=({},{},{}) onGround={} flying={} vel=({},{},{}) tris={}", at.x, at.y, at.z, player.onGround(), player.getAbilities().flying,
+					player.getDeltaMovement().x, player.getDeltaMovement().y, player.getDeltaMovement().z, dev.rehan.passthrough.sky.HostTris.triangleCount());
+			}
 			Passthrough.events.accept(String.format(Locale.ROOT, "{\"t\":\"mcpos\",\"pos\":[%.4f,%.4f,%.4f],\"eye\":%.3f,\"walk\":true}", at.x, at.y, at.z, player.getEyeHeight()));
 			return;
 		}

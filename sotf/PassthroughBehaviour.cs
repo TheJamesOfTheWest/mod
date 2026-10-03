@@ -32,7 +32,7 @@ namespace SotfPassthrough
         bool _walk;                   // F6: Steve drives, the game's body follows Minecraft's player
         Vector3 _camOffset;           // camera minus body root, measured when walking starts
         Vector3 _mcFeet; float _mcEye = 1.62f; bool _haveMcPos;
-        float _nextGuard, _nextHide; float _lastSurface = float.NaN;
+        float _nextGuard, _nextHide, _nextWalkLog; float _lastSurface = float.NaN; int _setposSent;
         // ground heights (MC y at each column centre) and the 8x8 regions whose triangles must be (re)sent
         readonly Dictionary<long, float> _heights = new Dictionary<long, float>();
         readonly HashSet<long> _dirty = new HashSet<long>();
@@ -96,7 +96,15 @@ namespace SotfPassthrough
             if (_walk && _haveMcPos)
             {
                 GuardGround();
-                Hooks.MoveBody(_mcFeet + Vector3.up * _mcEye - _camOffset);
+                var bodyTarget = _mcFeet + Vector3.up * _mcEye - _camOffset;
+                Hooks.MoveBody(bodyTarget);
+                if (Time.unscaledTime > _nextWalkLog)
+                {
+                    _nextWalkLog = Time.unscaledTime + 1f;
+                    Hooks.TryGetBody(out var nowBody);
+                    Plugin.Instance.Log.LogInfo("walk: mcFeet=" + _mcFeet + " eye=" + _mcEye + " target=" + bodyTarget + " body=" + nowBody + " cam=" + pos + " camOffset=" + _camOffset
+                        + " surface=" + _lastSurface + " yOffset=" + _yOffset + " setposSent=" + _setposSent);
+                }
             }
             if (_mcMode && Time.unscaledTime > _nextHide) { _nextHide = Time.unscaledTime + 2f; Hooks.HideBody(true); }
             PollInput();
@@ -226,7 +234,11 @@ namespace SotfPassthrough
             if (Ground(_mcFeet + Vector3.up * 1.5f, out float g)) _lastSurface = g + _yOffset;
             if (float.IsNaN(_lastSurface)) return;
             if (mcFeetY < _lastSurface - 0.6f)
+            {
+                _setposSent++;
+                if (_setposSent <= 20 || _setposSent % 20 == 0) Plugin.Instance.Log.LogInfo("guard: lifting Steve from " + mcFeetY + " to surface " + _lastSurface + " (#" + _setposSent + ")");
                 _ws.Send("{\"t\":\"setpos\",\"p\":[" + (-_mcFeet.x).ToString("R", C) + "," + (_lastSurface + 0.01f).ToString("R", C) + "," + _mcFeet.z.ToString("R", C) + "]}");
+            }
         }
 
         static readonly int[] ScreenKeys = BuildScreenKeys();
