@@ -14,6 +14,7 @@ import net.minecraft.client.InactivityFpsLimit;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.Options;
 import net.minecraft.client.gui.screens.DeathScreen;
+import net.minecraft.client.gui.screens.LevelLoadingScreen;
 import net.minecraft.client.gui.screens.TitleScreen;
 import net.minecraft.client.tutorial.TutorialSteps;
 import net.minecraft.core.HolderLookup;
@@ -116,7 +117,7 @@ public class PassthroughClient implements ClientModInitializer {
 			restoreIn = 6;
 		}
 
-		boolean open = minecraft.player != null && minecraft.gui.screen() != null && !(minecraft.gui.screen() instanceof DeathScreen);
+		boolean open = minecraft.player != null && minecraft.gui.screen() != null && !(minecraft.gui.screen() instanceof DeathScreen) && !(minecraft.gui.screen() instanceof LevelLoadingScreen);
 		if (open != screenOpen) {
 			screenOpen = open;
 			Passthrough.events.accept("{\"t\":\"screen\",\"open\":" + open + "}");

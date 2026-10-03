@@ -19,7 +19,7 @@ namespace SotfPassthrough
         {
             "PrimaryAction", "SecondaryAction", "TertiaryAction",
             "HotKey1", "HotKey2", "HotKey3", "HotKey4", "HotKey5", "HotKey6", "HotKey7", "HotKey8", "HotKey9", "HotKey0",
-            "CycleForward", "CycleBack", "MouseScrollWheel", "ScrollY", "Interact",
+            "CycleForward", "CycleBack", "Interact",
         };
         static bool _loggedMissing;
 
@@ -195,7 +195,7 @@ namespace SotfPassthrough
             try
             {
                 var rb = TheForest.Utils.LocalPlayer.Rigidbody;
-                if (rb != null) { rb.position = pos; rb.velocity = Vector3.zero; }
+                if (rb != null) { rb.position = pos; if (!rb.isKinematic) rb.velocity = Vector3.zero; }
                 TheForest.Utils.LocalPlayer.Transform.position = pos;
                 Physics.SyncTransforms();
             }
@@ -273,7 +273,20 @@ namespace SotfPassthrough
             try
             {
                 var o = cam.transform.position; var f = cam.transform.forward;
-                if (!Physics.Raycast(o, f, out RaycastHit hit, 5f, ~(1 << 2), QueryTriggerInteraction.Collide)) return;
+                // nearest hit that is not part of the player itself (its Grabber collider sits right in front of the camera) or one of our block colliders
+                var hits = Physics.RaycastAll(o, f, 5f, ~(1 << 2), QueryTriggerInteraction.Collide);
+                Transform self = null;
+                try { self = TheForest.Utils.LocalPlayer.GameObject.transform; } catch (Exception) { }
+                RaycastHit hit = default; float best = float.MaxValue;
+                for (int i = 0; i < hits.Length; i++)
+                {
+                    var h = hits[i];
+                    if (h.collider == null) continue;
+                    if (h.collider.gameObject.name == "MCBlock") continue;
+                    if (self != null && h.collider.transform.IsChildOf(self)) continue;
+                    if (h.distance < best) { best = h.distance; hit = h; }
+                }
+                if (best == float.MaxValue) return;
                 var t = hit.collider.GetComponentInParent<Sons.Gameplay.TreeCutting.TreeCutManager>();
                 if (t == null) { Log("chop: hit " + hit.collider.name + " (no TreeCutManager)"); return; }
                 int id = t.GetInstanceID();
