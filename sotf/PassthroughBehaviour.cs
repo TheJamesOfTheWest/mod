@@ -31,7 +31,7 @@ namespace SotfPassthrough
         {
             var cam = Camera.main;
             if (cam == null || !_ws.Connected) return;
-            if (_ws.JustConnected) { _ws.JustConnected = false; _sampled.Clear(); _haveOffset = false; _ws.Send("{\"t\":\"clear\"}"); }
+            if (_ws.JustConnected) { _ws.JustConnected = false; _sampled.Clear(); _haveOffset = false; _ws.Send("{\"t\":\"clear\"}"); _ws.Send("{\"t\":\"view\",\"w\":" + Screen.width + ",\"h\":" + Screen.height + "}"); }
             while (_ws.TryReceive(out _)) { } // TODO: handle "explosion" etc.
 
             var t = cam.transform;
